@@ -1,0 +1,8 @@
+{
+  "DAY": {"label": "Daylight", "time": 10.0, "brightness": 1.0, "warmth": 0.15, "clouds": 0.25},
+  "GOLDEN": {"label": "Golden Hour", "time": 17.0, "brightness": 1.0, "warmth": 0.55, "clouds": 0.22},
+  "SUNSET": {"label": "Sunset", "time": 18.0, "brightness": 1.0, "warmth": 0.75, "clouds": 0.2},
+  "NIGHT": {"label": "Night", "time": 22.0, "brightness": 1.0, "warmth": 0.0, "clouds": 0.15},
+  "DUNGEONS": {"label": "MC Dungeons II", "time": 15.0, "brightness": 1.0, "warmth": 0.35, "clouds": 1.0},
+  "VIBRANT": {"label": "Vibrant Visuals", "time": 10.5, "brightness": 1.0, "warmth": 0.1, "clouds": 0.3}
+}

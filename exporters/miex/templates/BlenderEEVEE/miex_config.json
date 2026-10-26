@@ -1,0 +1,7 @@
+{
+    "doubleSided": [],
+    "calculateCornerUVs": true,
+    "subdivideModelsForCorners": false,
+    "renderGamut": "sRGB",
+    "maxMaterialNameLength": 50
+}

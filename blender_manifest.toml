@@ -1,0 +1,16 @@
+schema_version = "1.0.0"
+id = "mcbedrockparticles"
+version = "1.3.1"
+name = "Sparkle"
+tagline = "A minecraft blender suite"
+description = "A minecraft blender suite"
+maintainer = "MrRobot and TylerBits"
+type = "add-on"
+blender_version_min = "5.2.0"
+license = [
+  "SPDX-License-Identifier: GPL-2.0-or-later"
+]
+
+[permissions]
+network = "Check for updates"
+files = "Read assets; write exports, projects and color profiles"

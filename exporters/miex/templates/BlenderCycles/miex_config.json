@@ -1,0 +1,8 @@
+{
+    "doubleSided": [],
+    "calculateCornerUVs": true,
+    "subdivideModelsForCorners": false,
+    "renderGamut": "sRGB",
+    "forceDoubleSidedOnEverything": true,
+    "maxMaterialNameLength": 50
+}

@@ -1,0 +1,9 @@
+{
+  "source": "https://github.com/Mojang/bedrock-samples/blob/921fafb05c93abeae56c2f2868cd8f942bdbcc0f/metadata/molang_modules/mojang-molang-queries.json",
+  "commit": "921fafb05c93abeae56c2f2868cd8f942bdbcc0f",
+  "commit_date": "2026-06-16T16:38:25Z",
+  "release": "1.26.30.5",
+  "sha256": "3db1ff59d46a051feab06e88d8d61bd17eb3c2111750aa9a3e9c9b771d5b5c90",
+  "vendored_on": "2026-07-28",
+  "runtime_network_required": false
+}

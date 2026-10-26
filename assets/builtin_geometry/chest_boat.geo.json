@@ -1,0 +1,111 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.chest_boat",
+        "texture_width": 128,
+        "texture_height": 128,
+        "visible_bounds_width": 4,
+        "visible_bounds_height": 2,
+        "visible_bounds_offset": [0, 0.5, 0]
+      },
+      "bones": [
+        {"name": "boat", "pivot": [0, 0, 0]},
+        {"name": "front", "parent": "boat", "pivot": [0, 2, -15], "rotation": [0, -180, 0], "cubes": [{"origin": [-8, 3, -16], "size": [16, 6, 2], "uv": [0, 27]}]},
+        {"name": "left", "parent": "boat", "pivot": [9, 2, 0], "rotation": [0, 90, 0], "cubes": [{"origin": [-5, 3, -1], "size": [28, 6, 2], "uv": [0, 43]}]},
+        {"name": "right", "parent": "boat", "pivot": [-9, 2, 0], "rotation": [0, -90, 0], "cubes": [{"origin": [-23, 3, -1], "size": [28, 6, 2], "uv": [0, 35]}]},
+        {"name": "back", "parent": "boat", "pivot": [4, 2, 15], "cubes": [{"origin": [-9, 3, 14], "size": [18, 6, 2], "uv": [0, 19]}]},
+        {"name": "bottom", "parent": "boat", "pivot": [1, 3, 0], "rotation": [0, 90, -90], "cubes": [{"origin": [-13, -4, -3], "size": [28, 16, 3], "uv": [0, 0]}]},
+        {
+          "name": "left_paddle", "parent": "boat", "pivot": [9, 11, -3], "rotation": [124, 50, 165],
+          "cubes": [
+            {"origin": [8, 9, -8], "size": [2, 2, 18], "uv": [62, 0]},
+            {"origin": [7.999, 8, 5], "size": [1, 6, 7], "uv": [62, 0]}
+          ]
+        },
+        {
+          "name": "right_paddle", "parent": "boat", "pivot": [-9, 11, -3], "rotation": [124, -50, -165],
+          "cubes": [
+            {"origin": [-10, 9, -8], "size": [2, 2, 18], "uv": [62, 20]},
+            {"origin": [-8.999, 8, 5], "size": [1, 6, 7], "uv": [62, 20]}
+          ]
+        },
+        {"name": "chest_bottom", "parent": "boat", "pivot": [-6, 11, 2], "cubes": [{"origin": [-6, 3, 2], "size": [12, 8, 12], "uv": [0, 76]}]},
+        {"name": "chest_lid", "parent": "boat", "pivot": [-6, 15, 2], "cubes": [{"origin": [-6, 10, 2], "size": [12, 5, 12], "uv": [0, 59]}]},
+        {"name": "chest_lock", "parent": "boat", "pivot": [-1, 12, 1], "cubes": [{"origin": [-1, 8, 1], "size": [2, 4, 1], "uv": [0, 59]}]}
+      ]
+    },
+    {
+      "description": {
+        "identifier": "geometry.bamboo_raft",
+        "texture_width": 128,
+        "texture_height": 64,
+        "visible_bounds_width": 4,
+        "visible_bounds_height": 2,
+        "visible_bounds_offset": [0, 0.5, 0]
+      },
+      "bones": [
+        {"name": "boat", "pivot": [0, 0, 0]},
+        {
+          "name": "bottom", "parent": "boat", "pivot": [1, 8, 0], "rotation": [0, 90, -90],
+          "cubes": [
+            {"origin": [-13, -1, -4], "size": [28, 20, 4], "uv": [0, 0]},
+            {"origin": [-13, 1, -8], "size": [28, 16, 4], "uv": [0, 0]}
+          ]
+        },
+        {
+          "name": "left_paddle", "parent": "boat", "pivot": [9, 10, -3], "rotation": [124, 50, 165],
+          "cubes": [
+            {"origin": [8, 8, -8], "size": [2, 2, 18], "uv": [0, 24]},
+            {"origin": [7.999, 7, 5], "size": [1, 6, 7], "uv": [0, 24]}
+          ]
+        },
+        {
+          "name": "right_paddle", "parent": "boat", "pivot": [-9, 10, -3], "rotation": [124, -50, -165],
+          "cubes": [
+            {"origin": [-10, 8, -8], "size": [2, 2, 18], "uv": [40, 24]},
+            {"origin": [-8.999, 7, 5], "size": [1, 6, 7], "uv": [40, 24]}
+          ]
+        }
+      ]
+    },
+    {
+      "description": {
+        "identifier": "geometry.chest_bamboo_raft",
+        "texture_width": 128,
+        "texture_height": 128,
+        "visible_bounds_width": 4,
+        "visible_bounds_height": 2,
+        "visible_bounds_offset": [0, 0.5, 0]
+      },
+      "bones": [
+        {"name": "boat", "pivot": [0, 0, 0]},
+        {
+          "name": "bottom", "parent": "boat", "pivot": [1, 8, 0], "rotation": [0, 90, -90],
+          "cubes": [
+            {"origin": [-13, -1, -4], "size": [28, 20, 4], "uv": [0, 0]},
+            {"origin": [-13, 1, -8], "size": [28, 16, 4], "uv": [0, 0]}
+          ]
+        },
+        {
+          "name": "left_paddle", "parent": "boat", "pivot": [9, 10, -3], "rotation": [124, 50, 165],
+          "cubes": [
+            {"origin": [8, 8, -8], "size": [2, 2, 18], "uv": [0, 24]},
+            {"origin": [7.999, 7, 5], "size": [1, 6, 7], "uv": [0, 24]}
+          ]
+        },
+        {
+          "name": "right_paddle", "parent": "boat", "pivot": [-9, 10, -3], "rotation": [124, -50, -165],
+          "cubes": [
+            {"origin": [-10, 8, -8], "size": [2, 2, 18], "uv": [40, 24]},
+            {"origin": [-8.999, 7, 5], "size": [1, 6, 7], "uv": [40, 24]}
+          ]
+        },
+        {"name": "chest_bottom", "parent": "boat", "pivot": [-6, 16, 2], "cubes": [{"origin": [-6, 8, 2], "size": [12, 8, 12], "uv": [0, 76]}]},
+        {"name": "chest_lid", "parent": "boat", "pivot": [-6, 20, 2], "cubes": [{"origin": [-6, 15, 2], "size": [12, 5, 12], "uv": [0, 59]}]},
+        {"name": "chest_lock", "parent": "boat", "pivot": [-1, 17, 1], "cubes": [{"origin": [-1, 13, 1], "size": [2, 4, 1], "uv": [0, 59]}]}
+      ]
+    }
+  ]
+}

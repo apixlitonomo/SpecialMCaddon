@@ -1,0 +1,8 @@
+{
+  "source": "https://github.com/EngineHub/WorldEdit",
+  "revision": "6e148b7ce0a47c83b9a250e1ee549632bf825c30",
+  "path": "worldedit-core/src/main/resources/com/sk89q/worldedit/world/registry/legacy.json",
+  "license": "GPL-3.0-or-later",
+  "sha256": "9c890c76ecf7b5a4e5f8ecf2826dea12299bba48c9b15e9cf8c41097856a0e0e",
+  "changes": "Unmodified upstream mapping. Only the blocks table is used."
+}

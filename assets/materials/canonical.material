@@ -1,0 +1,66 @@
+{
+  // Canonical renderer aliases absent from distributable resource packs.
+  // Pack-local .material definitions always take precedence over this file.
+  "materials": {
+    "entity": {
+      "states": [
+        "DisableCulling"
+      ]
+    },
+    "entity_nocull:entity": {
+      "+states": [
+        "DisableCulling"
+      ]
+    },
+    "entity_alphablend": {
+      "states": [
+        "Blending"
+      ]
+    },
+    "entity_static": {
+    },
+    "entity_alphatest:entity": {
+      "+states": [
+        "AlphaToCoverage"
+      ]
+    },
+    "entity_alphatest_multicolor_tint:entity_alphatest": {
+      "+defines": [
+        "COLOR_MASK"
+      ]
+    },
+    "entity_emissive:entity": {
+      "+defines": [
+        "USE_EMISSIVE_ALPHA"
+      ]
+    },
+    "entity_emissive_alpha:entity_emissive": {
+      "+states": [
+        "AlphaToCoverage"
+      ],
+      "alphaTest": 0.0001
+    },
+
+    "glow_squid:entity_emissive": {},
+    "spider:entity_emissive_alpha": {},
+    "spider_invisible:entity_emissive_alpha": {},
+    "enderman:entity_emissive_alpha": {},
+    "enderman_invisible:entity_emissive_alpha": {},
+    "creaking:entity_alphatest": {
+      "-states": [
+        "DisableCulling"
+      ]
+    },
+    "creaking_eyes:entity_alphatest": {
+      "-states": [
+        "DisableCulling"
+      ]
+    },
+    "salmon:entity_alphatest": {},
+    "sheep:entity_alphatest_multicolor_tint": {},
+    "phantom:entity_emissive_alpha": {},
+    "nautilus:entity_alphatest": {},
+    "nautilus_armor:entity_alphatest": {},
+    "llama_spit:entity": {}
+  }
+}

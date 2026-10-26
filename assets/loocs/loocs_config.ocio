@@ -1,0 +1,737 @@
+# Copyright 2024 Bram Stout Productions
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are
+# met:
+#
+#     (1) Redistributions of source code must retain the above copyright
+#     notice, this list of conditions and the following disclaimer. 
+#
+#     (2) Redistributions in binary form must reproduce the above copyright
+#     notice, this list of conditions and the following disclaimer in
+#     the documentation and/or other materials provided with the
+#     distribution.  
+#
+#     (3)The name of the author may not be used to
+#     endorse or promote products derived from this software without
+#     specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+# IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
+# INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+# STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+# IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE. 
+
+ocio_profile_version: 2
+description: The reference OCIO implementation of the LOOCS color management workflow.
+name: LOOCS
+search_path: "luts"
+family_separator: /
+roles:
+    aces_interchange: ACES2065-1
+    cie_xyz_d65_interchange: CIE-XYZ-D65
+    color_picking: LOOCS Tex
+    color_timing: LOOCS G1
+    compositing_log: log
+    data: raw
+    default: sRGB
+    matte_paint: LOOCS Paint
+    reference: LOOCS G1
+    scene_linear: LOOCS G2
+    rendering: LOOCS G2
+    texture_paint: LOOCS Tex
+    srgb_linear: sRGB-linear
+    srgb_texture: sRGB
+    srgb_tc_neutral: sRGB TC Neutral
+    srgb_tc_filmic: sRGB TC Filmic
+    srgb_tc_filmic_vintage: sRGB TC Filmic Vintage
+    srgb_tc_filmic_classic: sRGB TC Filmic Classic
+    srgb_tc_animation: sRGB TC Animation
+    srgb_tc_chroma_luma: sRGB TC Chroma Luma
+    srgb_tc_flat: sRGB TC Flat
+    srgb_tc_hvs: sRGB TC HVS
+file_rules:
+    - !<Rule> {name: EmissionsRGBFilmic, extension: "*", pattern: "*_emission_filmic*", colorspace: sRGB Filmic}
+    - !<Rule> {name: EmissionsRGBFilmicClassic, extension: "*", pattern: "*_emission_filmic_classic*", colorspace: sRGB Filmic Classic}
+    - !<Rule> {name: EmissionsRGBAnimation, extension: "*", pattern: "*_emission_animation*", colorspace: sRGB Animation}
+    - !<Rule> {name: EmissionsRGBFlat, extension: "*", pattern: "*_emission_flat*", colorspace: sRGB Flat}
+    - !<Rule> {name: EmissionsRGBChromaLuma, extension: "*", pattern: "*_emission_chroma_luma*", colorspace: sRGB Chroma Luma}
+    - !<Rule> {name: EmissionsRGBPainter, extension: "*", pattern: "*_emission_painter*", colorspace: sRGB Painter}
+    - !<Rule> {name: EmissionLinear, extension: "exr", pattern: "*_emission*", colorspace: scene_linear}
+    - !<Rule> {name: EmissionsRGB, extension: "*", pattern: "*_emission*", colorspace: sRGB Flat}
+    - !<Rule> {name: OpenEXR, extension: "exr", pattern: "*", colorspace: scene_linear}
+    - !<Rule> {name: Default, colorspace: sRGB}
+view_transforms:
+    - !<ViewTransform>
+        name: Filmic 4000nits
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: Filmic_4000nits.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: Filmic
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: Filmic.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: Filmic Classic 4000nits
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: Filmic_Classic_4000nits.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: Filmic Classic
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: Filmic_Classic.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: Filmic Classic BW 4000nits
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: Filmic_Classic_BW_4000nits.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: Filmic Classic BW
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: Filmic_Classic_BW.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: Filmic Vintage 4000nits
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: Filmic_Vintage_4000nits.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: Filmic Vintage
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: Filmic_Vintage.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: Neutral 4000nits
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: Neutral_4000nits.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: Neutral
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: Neutral.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: Animation 4000nits
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: Animation_4000nits.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: Animation
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: Animation.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: Flat 4000nits
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: Flat_4000nits.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: Flat
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: Flat.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: Chroma Luma 4000nits
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: Chroma_Luma_4000nits.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: Chroma Luma
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: Chroma_Luma.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: HVS 4000nits
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: HVS_4000nits.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: HVS
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: HVS.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: Painter 4000nits
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: Painter_4000nits.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: Painter
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+                - !<FileTransform> {src: Painter.cube, interpolation: linear}
+    - !<ViewTransform>
+        name: None
+        from_scene_reference: !<RangeTransform> {min_in_value: 0.0, min_out_value: 0.0}
+default_view_transform: None
+display_colorspaces:
+    - !<ColorSpace>
+        name: LOOCS G0 - Display G1
+        family: Displays
+        encoding: sdr-video
+        from_display_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [0.677388872259514, 0.0888716763629592, 0.23373945137752639, 0.0, 0.07770682441667111, 0.8890779271562387, 0.03321524842709009, 0.0, 0.11071571648127403, 0.022589906383386676, 0.8666943771353393, 0.0, 0.0, 0.0, 0.0, 1.0]}
+    - !<ColorSpace>
+        name: LOOCS G0 - Display G2
+        family: Displays
+        encoding: sdr-video
+        from_display_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [0.5929997291439166, 0.11296309541833977, 0.2940371754377433, 0.0, 0.1307751517014874, 0.7039615802358463, 0.165263268062666, 0.0, 0.15593452923330894, 0.14245465167455196, 0.701610819092139, 0.0, 0.0, 0.0, 0.0, 1.0]}
+    - !<ColorSpace>
+        name: CIE-XYZ-D65 - Display G1
+        family: Displays
+        encoding: sdr-video
+        from_display_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [0.7300495200236012, 0.16695169810026675, 0.05345470892780355, 0.0, 0.24892049899599902, 0.9075323076219629, -0.15645280661796165, 0.0, -0.09939228405140592, -0.21832145136188738, 1.406771486173172, 0.0, 0.0, 0.0, 0.0, 1.0]}
+    - !<ColorSpace>
+        name: CIE-XYZ-D65 - Display G2
+        family: Displays
+        encoding: sdr-video
+        from_display_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [0.6301460056995295, 0.14944403918368204, 0.17086588216846002, 0.0, 0.2628287549282477, 0.6940400515146654, 0.043131193557087, 0.0, 8.930640670344261e-05, 0.02689470478028993, 1.0620737395728852, 0.0, 0.0, 0.0, 0.0, 1.0]}
+    - !<ColorSpace>
+        name: sRGB - Display G1
+        family: Displays
+        encoding: sdr-video
+        from_display_reference: !<GroupTransform>
+            children:
+                - !<ExponentTransform> {value: [2.2, 2.2, 2.2, 1], direction: inverse}
+                - !<FileTransform> {src: sRGBDisplay_G1.cube, interpolation: linear}
+    - !<ColorSpace>
+        name: sRGB - Display G2
+        family: Displays
+        encoding: sdr-video
+        from_display_reference: !<GroupTransform>
+            children:
+                - !<ExponentTransform> {value: [2.2, 2.2, 2.2, 1], direction: inverse}
+                - !<FileTransform> {src: sRGBDisplay_G2.cube, interpolation: linear}
+    - !<ColorSpace>
+        name: Rec709 - Display G1
+        family: Displays
+        encoding: sdr-video
+        from_display_reference: !<GroupTransform>
+            children:
+                - !<ExponentTransform> {value: [2.4, 2.4, 2.4, 1], direction: inverse}
+                - !<FileTransform> {src: Rec709Display_G1.cube, interpolation: linear}
+    - !<ColorSpace>
+        name: Rec709 - Display G2
+        family: Displays
+        encoding: sdr-video
+        from_display_reference: !<GroupTransform>
+            children:
+                - !<ExponentTransform> {value: [2.4, 2.4, 2.4, 1], direction: inverse}
+                - !<FileTransform> {src: Rec709Display_G2.cube, interpolation: linear}
+    - !<ColorSpace>
+        name: P3-D65 - Display G1
+        family: Displays
+        encoding: sdr-video
+        from_display_reference: !<GroupTransform>
+            children:
+                - !<ExponentTransform> {value: [2.2, 2.2, 2.2, 1], direction: inverse}
+                - !<FileTransform> {src: P3D65Display_G1.cube, interpolation: linear}
+    - !<ColorSpace>
+        name: P3-D65 - Display G2
+        family: Displays
+        encoding: sdr-video
+        from_display_reference: !<GroupTransform>
+            children:
+                - !<ExponentTransform> {value: [2.2, 2.2, 2.2, 1], direction: inverse}
+                - !<FileTransform> {src: P3D65Display_G2.cube, interpolation: linear}
+    - !<ColorSpace>
+        name: Rec2100 PQ - Display G1
+        family: Displays
+        encoding: sdr-video
+        from_display_reference: !<GroupTransform>
+            children:
+                - !<BuiltinTransform> {style: CURVE - LINEAR_to_ST-2084}
+                - !<FileTransform> {src: Rec2100_PQDisplay_G1.cube, interpolation: linear}
+    - !<ColorSpace>
+        name: Rec2100 PQ - Display G2
+        family: Displays
+        encoding: sdr-video
+        from_display_reference: !<GroupTransform>
+            children:
+                - !<BuiltinTransform> {style: CURVE - LINEAR_to_ST-2084}
+                - !<FileTransform> {src: Rec2100_PQDisplay_G2.cube, interpolation: linear}
+    - !<ColorSpace>
+        name: Rec2100 PQ P3 Limit - Display G1
+        family: Displays
+        encoding: sdr-video
+        from_display_reference: !<GroupTransform>
+            children:
+                - !<BuiltinTransform> {style: CURVE - LINEAR_to_ST-2084}
+                - !<FileTransform> {src: Rec2100_PQ_P3_LimitDisplay_G1.cube, interpolation: linear}
+    - !<ColorSpace>
+        name: Rec2100 PQ P3 Limit - Display G2
+        family: Displays
+        encoding: sdr-video
+        from_display_reference: !<GroupTransform>
+            children:
+                - !<BuiltinTransform> {style: CURVE - LINEAR_to_ST-2084}
+                - !<FileTransform> {src: Rec2100_PQ_P3_LimitDisplay_G2.cube, interpolation: linear}
+displays:
+    sRGB:
+        - !<View> {name: Filmic, view_transform: Filmic, display_colorspace: sRGB - Display G1}
+        - !<View> {name: Filmic Classic, view_transform: Filmic Classic, display_colorspace: sRGB - Display G2}
+        - !<View> {name: Filmic Classic BW, view_transform: Filmic Classic BW, display_colorspace: sRGB - Display G1}
+        - !<View> {name: Filmic Vintage, view_transform: Filmic Vintage, display_colorspace: sRGB - Display G2}
+        - !<View> {name: Neutral, view_transform: Neutral, display_colorspace: sRGB - Display G1}
+        - !<View> {name: Animation, view_transform: Animation, display_colorspace: sRGB - Display G2}
+        - !<View> {name: Flat, view_transform: Flat, display_colorspace: sRGB - Display G1}
+        - !<View> {name: Chroma Luma, view_transform: Chroma Luma, display_colorspace: sRGB - Display G2}
+        - !<View> {name: HVS, view_transform: HVS, display_colorspace: sRGB - Display G2}
+        - !<View> {name: Painter, view_transform: Painter, display_colorspace: sRGB - Display G1}
+        - !<View> {name: None, view_transform: None, display_colorspace: sRGB - Display G1}
+        - !<View> {name: Log, colorspace: log}
+        - !<View> {name: Raw, colorspace: raw}
+    Rec709:
+        - !<View> {name: Filmic, view_transform: Filmic, display_colorspace: Rec709 - Display G1}
+        - !<View> {name: Filmic Classic, view_transform: Filmic Classic, display_colorspace: Rec709 - Display G2}
+        - !<View> {name: Filmic Classic BW, view_transform: Filmic Classic BW, display_colorspace: Rec709 - Display G1}
+        - !<View> {name: Filmic Vintage, view_transform: Filmic Vintage, display_colorspace: Rec709 - Display G2}
+        - !<View> {name: Neutral, view_transform: Neutral, display_colorspace: Rec709 - Display G1}
+        - !<View> {name: Animation, view_transform: Animation, display_colorspace: Rec709 - Display G2}
+        - !<View> {name: Flat, view_transform: Flat, display_colorspace: Rec709 - Display G1}
+        - !<View> {name: Chroma Luma, view_transform: Chroma Luma, display_colorspace: Rec709 - Display G2}
+        - !<View> {name: HVS, view_transform: HVS, display_colorspace: Rec709 - Display G2}
+        - !<View> {name: Painter, view_transform: Painter, display_colorspace: Rec709 - Display G1}
+        - !<View> {name: None, view_transform: None, display_colorspace: Rec709 - Display G1}
+        - !<View> {name: Log, colorspace: log}
+        - !<View> {name: Raw, colorspace: raw}
+    DCIP3:
+        - !<View> {name: Filmic, view_transform: Filmic, display_colorspace: DCIP3 - Display G1}
+        - !<View> {name: Filmic Classic, view_transform: Filmic Classic, display_colorspace: DCIP3 - Display G2}
+        - !<View> {name: Filmic Classic BW, view_transform: Filmic Classic BW, display_colorspace: DCIP3 - Display G1}
+        - !<View> {name: Filmic Vintage, view_transform: Filmic Vintage, display_colorspace: DCIP3 - Display G2}
+        - !<View> {name: Neutral, view_transform: Neutral, display_colorspace: DCIP3 - Display G1}
+        - !<View> {name: Animation, view_transform: Animation, display_colorspace: DCIP3 - Display G2}
+        - !<View> {name: Flat, view_transform: Flat, display_colorspace: DCIP3 - Display G1}
+        - !<View> {name: Chroma Luma, view_transform: Chroma Luma, display_colorspace: DCIP3 - Display G2}
+        - !<View> {name: HVS, view_transform: HVS, display_colorspace: DCIP3 - Display G2}
+        - !<View> {name: Painter, view_transform: Painter, display_colorspace: DCIP3 - Display G1}
+        - !<View> {name: None, view_transform: None, display_colorspace: DCIP3 - Display G1}
+        - !<View> {name: Log, colorspace: log}
+        - !<View> {name: Raw, colorspace: raw}
+    LOOCS G0:
+        - !<View> {name: Filmic, view_transform: Filmic, display_colorspace: LOOCS G0 - Display G1}
+        - !<View> {name: Filmic Classic, view_transform: Filmic Classic, display_colorspace: LOOCS G0 - Display G2}
+        - !<View> {name: Filmic Classic BW, view_transform: Filmic Classic BW, display_colorspace: LOOCS G0 - Display G1}
+        - !<View> {name: Filmic Vintage, view_transform: Filmic Vintage, display_colorspace: LOOCS G0 - Display G2}
+        - !<View> {name: Neutral, view_transform: Neutral, display_colorspace: LOOCS G0 - Display G1}
+        - !<View> {name: Animation, view_transform: Animation, display_colorspace: LOOCS G0 - Display G2}
+        - !<View> {name: Flat, view_transform: Flat, display_colorspace: LOOCS G0 - Display G1}
+        - !<View> {name: Chroma Luma, view_transform: Chroma Luma, display_colorspace: LOOCS G0 - Display G2}
+        - !<View> {name: HVS, view_transform: HVS, display_colorspace: LOOCS G0 - Display G2}
+        - !<View> {name: Painter, view_transform: Painter, display_colorspace: LOOCS G0 - Display G1}
+        - !<View> {name: None, view_transform: None, display_colorspace: LOOCS G0 - Display G1}
+        - !<View> {name: Log, colorspace: log}
+        - !<View> {name: Raw, colorspace: raw}
+    CIE-XYZ-D65:
+        - !<View> {name: Filmic, view_transform: Filmic, display_colorspace: CIE-XYZ-D65 - Display G1}
+        - !<View> {name: Filmic Classic, view_transform: Filmic Classic, display_colorspace: CIE-XYZ-D65 - Display G2}
+        - !<View> {name: Filmic Classic BW, view_transform: Filmic Classic BW, display_colorspace: CIE-XYZ-D65 - Display G1}
+        - !<View> {name: Filmic Vintage, view_transform: Filmic Vintage, display_colorspace: CIE-XYZ-D65 - Display G2}
+        - !<View> {name: Neutral, view_transform: Neutral, display_colorspace: CIE-XYZ-D65 - Display G1}
+        - !<View> {name: Animation, view_transform: Animation, display_colorspace: CIE-XYZ-D65 - Display G2}
+        - !<View> {name: Flat, view_transform: Flat, display_colorspace: CIE-XYZ-D65 - Display G1}
+        - !<View> {name: Chroma Luma, view_transform: Chroma Luma, display_colorspace: CIE-XYZ-D65 - Display G2}
+        - !<View> {name: HVS, view_transform: HVS, display_colorspace: CIE-XYZ-D65 - Display G2}
+        - !<View> {name: Painter, view_transform: Painter, display_colorspace: CIE-XYZ-D65 - Display G1}
+        - !<View> {name: None, view_transform: None, display_colorspace: CIE-XYZ-D65 - Display G1}
+        - !<View> {name: Log, colorspace: log}
+        - !<View> {name: Raw, colorspace: raw}
+    Rec2100 PQ 4000nits:
+        - !<View> {name: Filmic, view_transform: Filmic 4000nits, display_colorspace: Rec2100 PQ - Display G1}
+        - !<View> {name: Filmic Classic, view_transform: Filmic Classic 4000nits, display_colorspace: Rec2100 PQ - Display G2}
+        - !<View> {name: Filmic Classic BW, view_transform: Filmic Classic BW 4000nits, display_colorspace: Rec2100 PQ - Display G1}
+        - !<View> {name: Filmic Vintage, view_transform: Filmic Vintage 4000nits, display_colorspace: Rec2100 PQ - Display G2}
+        - !<View> {name: Neutral, view_transform: Neutral 4000nits, display_colorspace: Rec2100 PQ - Display G1}
+        - !<View> {name: Animation, view_transform: Animation 4000nits, display_colorspace: Rec2100 PQ - Display G2}
+        - !<View> {name: Flat, view_transform: Flat 4000nits, display_colorspace: Rec2100 PQ - Display G1}
+        - !<View> {name: Chroma Luma, view_transform: Chroma Luma 4000nits, display_colorspace: Rec2100 PQ - Display G2}
+        - !<View> {name: HVS, view_transform: HVS 4000nits, display_colorspace: Rec2100 PQ - Display G2}
+        - !<View> {name: Painter, view_transform: Painter 4000nits, display_colorspace: Rec2100 PQ - Display G1}
+        - !<View> {name: None, view_transform: None, display_colorspace: Rec2100 PQ - Display G1}
+        - !<View> {name: Log, colorspace: log}
+        - !<View> {name: Raw, colorspace: raw}
+    Rec2100 PQ P3 Limit 4000nits:
+        - !<View> {name: Filmic, view_transform: Filmic 4000nits, display_colorspace: Rec2100 PQ P3 Limit - Display G1}
+        - !<View> {name: Filmic Classic, view_transform: Filmic Classic 4000nits, display_colorspace: Rec2100 PQ P3 Limit - Display G2}
+        - !<View> {name: Filmic Classic BW, view_transform: Filmic Classic BW 4000nits, display_colorspace: Rec2100 PQ P3 Limit - Display G1}
+        - !<View> {name: Filmic Vintage, view_transform: Filmic Vintage 4000nits, display_colorspace: Rec2100 PQ P3 Limit - Display G2}
+        - !<View> {name: Neutral, view_transform: Neutral 4000nits, display_colorspace: Rec2100 PQ P3 Limit - Display G1}
+        - !<View> {name: Animation, view_transform: Animation 4000nits, display_colorspace: Rec2100 PQ P3 Limit - Display G2}
+        - !<View> {name: Flat, view_transform: Flat 4000nits, display_colorspace: Rec2100 PQ P3 Limit - Display G1}
+        - !<View> {name: Chroma Luma, view_transform: Chroma Luma 4000nits, display_colorspace: Rec2100 PQ P3 Limit - Display G2}
+        - !<View> {name: HVS, view_transform: HVS 4000nits, display_colorspace: Rec2100 PQ P3 Limit - Display G2}
+        - !<View> {name: Painter, view_transform: Painter 4000nits, display_colorspace: Rec2100 PQ P3 Limit - Display G1}
+        - !<View> {name: None, view_transform: None, display_colorspace: Rec2100 PQ P3 Limit - Display G1}
+        - !<View> {name: Log, colorspace: log}
+        - !<View> {name: Raw, colorspace: raw}
+    LOOCS G0 4000nits:
+        - !<View> {name: Filmic, view_transform: Filmic 4000nits, display_colorspace: LOOCS G0 - Display G1}
+        - !<View> {name: Filmic Classic, view_transform: Filmic Classic 4000nits, display_colorspace: LOOCS G0 - Display G2}
+        - !<View> {name: Filmic Classic BW, view_transform: Filmic Classic BW 4000nits, display_colorspace: LOOCS G0 - Display G1}
+        - !<View> {name: Filmic Vintage, view_transform: Filmic Vintage 4000nits, display_colorspace: LOOCS G0 - Display G2}
+        - !<View> {name: Neutral, view_transform: Neutral 4000nits, display_colorspace: LOOCS G0 - Display G1}
+        - !<View> {name: Animation, view_transform: Animation 4000nits, display_colorspace: LOOCS G0 - Display G2}
+        - !<View> {name: Flat, view_transform: Flat 4000nits, display_colorspace: LOOCS G0 - Display G1}
+        - !<View> {name: Chroma Luma, view_transform: Chroma Luma 4000nits, display_colorspace: LOOCS G0 - Display G2}
+        - !<View> {name: HVS, view_transform: HVS 4000nits, display_colorspace: LOOCS G0 - Display G2}
+        - !<View> {name: Painter, view_transform: Painter 4000nits, display_colorspace: LOOCS G0 - Display G1}
+        - !<View> {name: None, view_transform: None, display_colorspace: LOOCS G0 - Display G1}
+        - !<View> {name: Log, colorspace: log}
+        - !<View> {name: Raw, colorspace: raw}
+    CIE-XYZ-D65 4000nits:
+        - !<View> {name: Filmic, view_transform: Filmic 4000nits, display_colorspace: CIE-XYZ-D65 - Display G1}
+        - !<View> {name: Filmic Classic, view_transform: Filmic Classic 4000nits, display_colorspace: CIE-XYZ-D65 - Display G2}
+        - !<View> {name: Filmic Classic BW, view_transform: Filmic Classic BW 4000nits, display_colorspace: CIE-XYZ-D65 - Display G1}
+        - !<View> {name: Filmic Vintage, view_transform: Filmic Vintage 4000nits, display_colorspace: CIE-XYZ-D65 - Display G2}
+        - !<View> {name: Neutral, view_transform: Neutral 4000nits, display_colorspace: CIE-XYZ-D65 - Display G1}
+        - !<View> {name: Animation, view_transform: Animation 4000nits, display_colorspace: CIE-XYZ-D65 - Display G2}
+        - !<View> {name: Flat, view_transform: Flat 4000nits, display_colorspace: CIE-XYZ-D65 - Display G1}
+        - !<View> {name: Chroma Luma, view_transform: Chroma Luma 4000nits, display_colorspace: CIE-XYZ-D65 - Display G2}
+        - !<View> {name: HVS, view_transform: HVS 4000nits, display_colorspace: CIE-XYZ-D65 - Display G2}
+        - !<View> {name: Painter, view_transform: Painter 4000nits, display_colorspace: CIE-XYZ-D65 - Display G1}
+        - !<View> {name: None, view_transform: None, display_colorspace: CIE-XYZ-D65 - Display G1}
+        - !<View> {name: Log, colorspace: log}
+        - !<View> {name: Raw, colorspace: raw}
+colorspaces:
+    - !<ColorSpace>
+        name: LOOCS G1
+        encoding: scene-linear
+    - !<ColorSpace>
+        name: LOOCS G0
+        encoding: scene-linear
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [0.677388872259514, 0.0888716763629592, 0.23373945137752639, 0.0, 0.07770682441667111, 0.8890779271562387, 0.03321524842709009, 0.0, 0.11071571648127403, 0.022589906383386676, 0.8666943771353393, 0.0, 0.0, 0.0, 0.0, 1.0]}
+    - !<ColorSpace>
+        name: LOOCS G2
+        encoding: scene-linear
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [1.2051409697334556, 0.017671749651861107, -0.22281271938531674, 0.0, -0.09204801615925168, 1.3157611247223815, -0.22371310856312923, 0.0, -0.09135364431455387, -0.23888175285754598, 1.3302353971721, 0.0, 0.0, 0.0, 0.0, 1.0]}
+    - !<ColorSpace>
+        name: CIE-XYZ-D65
+        encoding: display-linear
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [0.7300495200236012, 0.16695169810026675, 0.05345470892780355, 0.0, 0.24892049899599902, 0.9075323076219629, -0.15645280661796165, 0.0, -0.09939228405140592, -0.21832145136188738, 1.406771486173172, 0.0, 0.0, 0.0, 0.0, 1.0]}
+    - !<ColorSpace>
+        name: ACES2065-1
+        encoding: scene-linear
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [0.7795707548623285, 0.18681963188319006, 0.03360961325448117, 0.0, -0.02773782940678292, 1.1396134893945686, -0.11187565998778529, 0.0, -0.0919850623670175, -0.1963293110374173, 1.2883143734044347, 0.0, 0.0, 0.0, 0.0, 1.0]}
+    - !<ColorSpace>
+        name: ACEScg
+        encoding: scene-linear
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [1.15783015592184, 0.043823299119719855, -0.20165345504156018, 0.0, -0.08313644536122185, 1.3457147907562514, -0.2625783453950286, 0.0, -0.08512464303670263, -0.20120199542622227, 1.2863266384629246, 0.0, 0.0, 0.0, 0.0, 1.0]}
+    - !<ColorSpace>
+        name: LOOCS Log
+        encoding: log
+        aliases: [log]
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.01345216811496, lin_side_slope: 1.0, log_side_offset: 0.446347818385, log_side_slope: 0.205133730235, lin_side_break: 0.0, linear_slope: 6.25}
+    - !<ColorSpace>
+        name: LOOCS LUT
+        encoding: log
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.002, lin_side_slope: 1.0, log_side_offset: 0.5, log_side_slope: 0.185255737328, lin_side_break: 1e-05, linear_slope: 40.15971883753466}
+    - !<ColorSpace>
+        name: raw
+        encoding: data
+        aliases: [Raw]
+        isdata: true
+    - !<ColorSpace>
+        name: LOOCS Tex
+        encoding: sdr-video
+        family: Inputs
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [1.2051409697334556, 0.017671749651861107, -0.22281271938531674, 0.0, -0.09204801615925168, 1.3157611247223815, -0.22371310856312923, 0.0, -0.09135364431455387, -0.23888175285754598, 1.3302353971721, 0.0, 0.0, 0.0, 0.0, 1.0]}
+                - !<ExponentTransform> {value: [2.2, 2.2, 2.2, 1], direction: inverse}
+    - !<ColorSpace>
+        name: LOOCS Paint
+        encoding: hdr-video
+        family: Inputs
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [1.2051409697334556, 0.017671749651861107, -0.22281271938531674, 0.0, -0.09204801615925168, 1.3157611247223815, -0.22371310856312923, 0.0, -0.09135364431455387, -0.23888175285754598, 1.3302353971721, 0.0, 0.0, 0.0, 0.0, 1.0]}
+                - !<ExponentTransform> {value: [3.0, 3.0, 3.0, 1], direction: inverse}
+                - !<FileTransform> {src: LOOCS_Paint.cube, interpolation: linear}
+    - !<ColorSpace>
+        name: sRGB
+        encoding: sdr-video
+        family: Inputs
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [2.032940425107643, -0.7452820426946676, -0.2876583824129756, 0.0, -0.2447593369467934, 1.531611884272578, -0.2868525473257844, 0.0, -0.11521614638653828, -0.4065876989690338, 1.521803845355572, 0.0, 0.0, 0.0, 0.0, 1.0]}
+                - !<ExponentTransform> {value: [2.2, 2.2, 2.2, 1], direction: inverse}
+    - !<ColorSpace>
+        name: sRGB-linear
+        encoding: scene-linear
+        family: Inputs
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [2.032940425107643, -0.7452820426946676, -0.2876583824129756, 0.0, -0.2447593369467934, 1.531611884272578, -0.2868525473257844, 0.0, -0.11521614638653828, -0.4065876989690338, 1.521803845355572, 0.0, 0.0, 0.0, 0.0, 1.0]}
+    - !<ColorSpace>
+        name: Rec709
+        encoding: sdr-video
+        family: Inputs
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [2.032940425107643, -0.7452820426946676, -0.2876583824129756, 0.0, -0.2447593369467934, 1.531611884272578, -0.2868525473257844, 0.0, -0.11521614638653828, -0.4065876989690338, 1.521803845355572, 0.0, 0.0, 0.0, 0.0, 1.0]}
+                - !<ExponentTransform> {value: [2.4, 2.4, 2.4, 1], direction: inverse}
+    - !<ColorSpace>
+        name: Rec2020
+        encoding: sdr-video
+        family: Inputs
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [1.1898892802577903, 0.019130397999003464, -0.20901967825679435, 0.0, -0.08590454680632965, 1.352262250467641, -0.26635770366131106, 0.0, -0.09140629396481699, -0.24155202995421693, 1.332958323919034, 0.0, 0.0, 0.0, 0.0, 1.0]}
+                - !<ExponentTransform> {value: [2.4, 2.4, 2.4, 1], direction: inverse}
+    - !<ColorSpace>
+        name: Rec2020-linear
+        encoding: scene-linear
+        family: Inputs
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [1.1898892802577903, 0.019130397999003464, -0.20901967825679435, 0.0, -0.08590454680632965, 1.352262250467641, -0.26635770366131106, 0.0, -0.09140629396481699, -0.24155202995421693, 1.332958323919034, 0.0, 0.0, 0.0, 0.0, 1.0]}
+    - !<ColorSpace>
+        name: ARRI LogC3
+        encoding: log
+        family: Inputs/Cameras
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [1.2058798666702761, -0.09554670164992893, -0.11033316502034735, 0.0, -0.13885370256236285, 1.1180055147826409, 0.020848187779722138, 0.0, -0.09717786848263169, -0.12408759271835826, 1.2212654612009899, 0.0, 0.0, 0.0, 0.0, 1.0]}
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.052272275, lin_side_slope: 5.555555, log_side_offset: 0.3855369987, log_side_slope: 0.2471896383, lin_side_break: 0.010590991559}
+    - !<ColorSpace>
+        name: ARRI LogC4
+        encoding: log
+        family: Inputs/Cameras
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [1.0562017730107631, 0.0613960652054909, -0.11759783821625393, 0.0, -0.02967977431178906, 1.1320710105959877, -0.10239123628419838, 0.0, -0.09126447516860883, -0.2004682040135667, 1.2917326791821757, 0.0, 0.0, 0.0, 0.0, 1.0]}
+                - !<LogCameraTransform> {base: 2.0, lin_side_offset: 64.0, lin_side_slope: 2231.82630906769, log_side_offset: -0.295908392682586, log_side_slope: 0.0647954196341293, lin_side_break: -0.0180569961199113}
+    - !<ColorSpace>
+        name: REDLogFilm REDWideGamutRGB
+        encoding: log
+        family: Inputs/Cameras
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [1.0023143688146592, 0.10789720722490835, -0.11021157603956824, 0.0, -0.04931607690404047, 1.0558123133047241, -0.0064962364006834195, 0.0, -0.024178524198737797, 0.10355980360638489, 0.9206187205923524, 0.0, 0.0, 0.0, 0.0, 1.0]}
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.01079775162327, lin_side_slope: 0.9892022483767, log_side_offset: 0.6695992179863147, log_side_slope: 0.2932551319648, lin_side_break: 1e-10}
+    - !<ColorSpace>
+        name: Log3G10 REDWideGamutRGB
+        encoding: log
+        family: Inputs/Cameras
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [1.0023143688146592, 0.10789720722490835, -0.11021157603956824, 0.0, -0.04931607690404047, 1.0558123133047241, -0.0064962364006834195, 0.0, -0.024178524198737797, 0.10355980360638489, 0.9206187205923524, 0.0, 0.0, 0.0, 0.0, 1.0]}
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 2.55975327, lin_side_slope: 155.975327, log_side_offset: 0.0, log_side_slope: 0.224282, lin_side_break: -0.01}
+    - !<ColorSpace>
+        name: S-Log3 S-Gamut3
+        encoding: log
+        family: Inputs/Cameras
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [1.0563432806165796, 0.06603795248493805, -0.12238123310151813, 0.0, -0.05340312397848561, 1.116073016347599, -0.06266989236911324, 0.0, -0.08127283683546682, -0.2036459945254901, 1.2849188313609565, 0.0, 0.0, 0.0, 0.0, 1.0]}
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.052631578947, lin_side_slope: 5.263157894736, log_side_offset: 0.41055718475, log_side_slope: 0.25562072336, lin_side_break: 0.01125, linear_slope: 6.621943711775822}
+    - !<ColorSpace>
+        name: S-Log3 S-Gamut3.Cine
+        encoding: log
+        family: Inputs/Cameras
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [1.238237941381377, -0.12305997888857353, -0.11517796249280379, 0.0, -0.025601925117990657, 1.0362157635306808, -0.01061383841269023, 0.0, -0.05257328287163257, -0.16853277230441602, 1.2211060551760486, 0.0, 0.0, 0.0, 0.0, 1.0]}
+                - !<LogCameraTransform> {base: 10.0, lin_side_offset: 0.052631578947, lin_side_slope: 5.263157894736, log_side_offset: 0.41055718475, log_side_slope: 0.25562072336, lin_side_break: 0.01125, linear_slope: 6.621943711775822}
+    - !<ColorSpace>
+        name: sRGB Filmic
+        encoding: sdr-video
+        family: Inputs/Color Renderings
+        from_scene_reference: !<DisplayViewTransform> {src: LOOCS G1, display: sRGB, view: Filmic}
+    - !<ColorSpace>
+        name: sRGB Filmic Classic
+        encoding: sdr-video
+        family: Inputs/Color Renderings
+        from_scene_reference: !<DisplayViewTransform> {src: LOOCS G1, display: sRGB, view: Filmic Classic}
+    - !<ColorSpace>
+        name: sRGB Filmic Classic BW
+        encoding: sdr-video
+        family: Inputs/Color Renderings
+        from_scene_reference: !<DisplayViewTransform> {src: LOOCS G1, display: sRGB, view: Filmic Classic BW}
+    - !<ColorSpace>
+        name: sRGB Neutral
+        encoding: sdr-video
+        family: Inputs/Color Renderings
+        from_scene_reference: !<DisplayViewTransform> {src: LOOCS G1, display: sRGB, view: Neutral}
+    - !<ColorSpace>
+        name: sRGB Animation
+        encoding: sdr-video
+        family: Inputs/Color Renderings
+        from_scene_reference: !<DisplayViewTransform> {src: LOOCS G1, display: sRGB, view: Animation}
+    - !<ColorSpace>
+        name: sRGB Flat
+        encoding: sdr-video
+        family: Inputs/Color Renderings
+        from_scene_reference: !<DisplayViewTransform> {src: LOOCS G1, display: sRGB, view: Flat}
+    - !<ColorSpace>
+        name: sRGB Chroma Luma
+        encoding: sdr-video
+        family: Inputs/Color Renderings
+        from_scene_reference: !<DisplayViewTransform> {src: LOOCS G1, display: sRGB, view: Chroma Luma}
+    - !<ColorSpace>
+        name: sRGB Painter
+        encoding: sdr-video
+        family: Inputs/Color Renderings
+        from_scene_reference: !<DisplayViewTransform> {src: LOOCS G1, display: sRGB, view: Painter}
+    - !<ColorSpace>
+        name: LOOCS G0 Filmic
+        encoding: sdr-video
+        family: Inputs/Color Renderings
+        from_scene_reference: !<DisplayViewTransform> {src: LOOCS G1, display: LOOCS G0, view: Filmic}
+    - !<ColorSpace>
+        name: LOOCS G0 Filmic Classic
+        encoding: sdr-video
+        family: Inputs/Color Renderings
+        from_scene_reference: !<DisplayViewTransform> {src: LOOCS G1, display: LOOCS G0, view: Filmic Classic}
+    - !<ColorSpace>
+        name: LOOCS G0 Filmic Classic BW
+        encoding: sdr-video
+        family: Inputs/Color Renderings
+        from_scene_reference: !<DisplayViewTransform> {src: LOOCS G1, display: LOOCS G0, view: Filmic Classic BW}
+    - !<ColorSpace>
+        name: LOOCS G0 Neutral
+        encoding: sdr-video
+        family: Inputs/Color Renderings
+        from_scene_reference: !<DisplayViewTransform> {src: LOOCS G1, display: LOOCS G0, view: Neutral}
+    - !<ColorSpace>
+        name: LOOCS G0 Animation
+        encoding: sdr-video
+        family: Inputs/Color Renderings
+        from_scene_reference: !<DisplayViewTransform> {src: LOOCS G1, display: LOOCS G0, view: Animation}
+    - !<ColorSpace>
+        name: LOOCS G0 Flat
+        encoding: sdr-video
+        family: Inputs/Color Renderings
+        from_scene_reference: !<DisplayViewTransform> {src: LOOCS G1, display: LOOCS G0, view: Flat}
+    - !<ColorSpace>
+        name: LOOCS G0 Chroma Luma
+        encoding: sdr-video
+        family: Inputs/Color Renderings
+        from_scene_reference: !<DisplayViewTransform> {src: LOOCS G1, display: LOOCS G0, view: Chroma Luma}
+    - !<ColorSpace>
+        name: LOOCS G0 Painter
+        encoding: sdr-video
+        family: Inputs/Color Renderings
+        from_scene_reference: !<DisplayViewTransform> {src: LOOCS G1, display: LOOCS G0, view: Painter}
+    - !<ColorSpace>
+        name: sRGB TC Neutral
+        encoding: sdr-video
+        family: Inputs
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [2.032940425107643, -0.7452820426946676, -0.2876583824129756, 0.0, -0.2447593369467934, 1.531611884272578, -0.2868525473257844, 0.0, -0.11521614638653828, -0.4065876989690338, 1.521803845355572, 0.0, 0.0, 0.0, 0.0, 1.0]}
+                - !<ExponentTransform> {value: [2.2, 2.2, 2.2, 1], direction: inverse}
+                - !<FileTransform> {src: texture_correction_sRGB_Neutral.cube, interpolation: linear, direction: inverse}
+    - !<ColorSpace>
+        name: sRGB TC Filmic
+        encoding: sdr-video
+        family: Inputs
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [2.032940425107643, -0.7452820426946676, -0.2876583824129756, 0.0, -0.2447593369467934, 1.531611884272578, -0.2868525473257844, 0.0, -0.11521614638653828, -0.4065876989690338, 1.521803845355572, 0.0, 0.0, 0.0, 0.0, 1.0]}
+                - !<ExponentTransform> {value: [2.2, 2.2, 2.2, 1], direction: inverse}
+                - !<FileTransform> {src: texture_correction_sRGB_Filmic.cube, interpolation: linear, direction: inverse}
+    - !<ColorSpace>
+        name: sRGB TC Filmic Classic
+        encoding: sdr-video
+        family: Inputs
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [2.032940425107643, -0.7452820426946676, -0.2876583824129756, 0.0, -0.2447593369467934, 1.531611884272578, -0.2868525473257844, 0.0, -0.11521614638653828, -0.4065876989690338, 1.521803845355572, 0.0, 0.0, 0.0, 0.0, 1.0]}
+                - !<ExponentTransform> {value: [2.2, 2.2, 2.2, 1], direction: inverse}
+                - !<FileTransform> {src: texture_correction_sRGB_Filmic_Classic.cube, interpolation: linear, direction: inverse}
+    - !<ColorSpace>
+        name: sRGB TC Filmic Vintage
+        encoding: sdr-video
+        family: Inputs
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [2.032940425107643, -0.7452820426946676, -0.2876583824129756, 0.0, -0.2447593369467934, 1.531611884272578, -0.2868525473257844, 0.0, -0.11521614638653828, -0.4065876989690338, 1.521803845355572, 0.0, 0.0, 0.0, 0.0, 1.0]}
+                - !<ExponentTransform> {value: [2.2, 2.2, 2.2, 1], direction: inverse}
+                - !<FileTransform> {src: texture_correction_sRGB_Filmic_Vintage.cube, interpolation: linear, direction: inverse}
+    - !<ColorSpace>
+        name: sRGB TC Animation
+        encoding: sdr-video
+        family: Inputs
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [2.032940425107643, -0.7452820426946676, -0.2876583824129756, 0.0, -0.2447593369467934, 1.531611884272578, -0.2868525473257844, 0.0, -0.11521614638653828, -0.4065876989690338, 1.521803845355572, 0.0, 0.0, 0.0, 0.0, 1.0]}
+                - !<ExponentTransform> {value: [2.2, 2.2, 2.2, 1], direction: inverse}
+                - !<FileTransform> {src: texture_correction_sRGB_Animation.cube, interpolation: linear, direction: inverse}
+    - !<ColorSpace>
+        name: sRGB TC Chroma Luma
+        encoding: sdr-video
+        family: Inputs
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [2.032940425107643, -0.7452820426946676, -0.2876583824129756, 0.0, -0.2447593369467934, 1.531611884272578, -0.2868525473257844, 0.0, -0.11521614638653828, -0.4065876989690338, 1.521803845355572, 0.0, 0.0, 0.0, 0.0, 1.0]}
+                - !<ExponentTransform> {value: [2.2, 2.2, 2.2, 1], direction: inverse}
+                - !<FileTransform> {src: texture_correction_sRGB_Chroma_Luma.cube, interpolation: linear, direction: inverse}
+    - !<ColorSpace>
+        name: sRGB TC Flat
+        encoding: sdr-video
+        family: Inputs
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [2.032940425107643, -0.7452820426946676, -0.2876583824129756, 0.0, -0.2447593369467934, 1.531611884272578, -0.2868525473257844, 0.0, -0.11521614638653828, -0.4065876989690338, 1.521803845355572, 0.0, 0.0, 0.0, 0.0, 1.0]}
+                - !<ExponentTransform> {value: [2.2, 2.2, 2.2, 1], direction: inverse}
+                - !<FileTransform> {src: texture_correction_sRGB_Flat.cube, interpolation: linear, direction: inverse}
+    - !<ColorSpace>
+        name: sRGB TC HVS
+        encoding: sdr-video
+        family: Inputs
+        from_scene_reference: !<GroupTransform>
+            children:
+                - !<MatrixTransform> {matrix: [2.032940425107643, -0.7452820426946676, -0.2876583824129756, 0.0, -0.2447593369467934, 1.531611884272578, -0.2868525473257844, 0.0, -0.11521614638653828, -0.4065876989690338, 1.521803845355572, 0.0, 0.0, 0.0, 0.0, 1.0]}
+                - !<ExponentTransform> {value: [2.2, 2.2, 2.2, 1], direction: inverse}
+                - !<FileTransform> {src: texture_correction_sRGB_HVS.cube, interpolation: linear, direction: inverse}
