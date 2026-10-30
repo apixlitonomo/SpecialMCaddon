@@ -7,7 +7,6 @@ block and store the distance to the bed in a small image sampled by world XY.
 Imported geometry and mesh data stay untouched.
 """
 import math
-import time
 
 import bpy
 from mathutils import Vector
@@ -16,8 +15,6 @@ TAG = 'mcaddon_water_depth'
 MAX_DEPTH = 32  # blocks; the encoded range of the 8-bit map
 MAX_TEXELS = 4096
 MAX_RAY_STEPS = 16
-MAX_SECONDS = 30.
-UNTRACED = 8  # blocks; water left untraced by the time limit reads fairly deep
 DOWN = Vector((0, 0, -1))
 
 
@@ -32,7 +29,7 @@ def bake(scene, collection, water_objects):
     from .water import is_water_material
     block = max(.001, float(collection.get('mcaddon_miex_block_units', 1)))
     epsilon = .001 * block
-    tops = {}
+    faces = []
     for obj in water_objects:
         slots = {i for i, slot in enumerate(obj.material_slots) if is_water_material(slot.material)}
         matrix = obj.matrix_world
@@ -42,14 +39,18 @@ def bake(scene, collection, water_objects):
             if face.material_index not in slots or (normals @ face.normal).normalized().z < .95:
                 continue
             points = [matrix @ vertices[i].co for i in face.vertices]
-            level = sum(p.z for p in points) / len(points)
-            for x in range(math.floor(min(p.x for p in points) / block + 1e-4),
-                           math.ceil(max(p.x for p in points) / block - 1e-4)):
-                for y in range(math.floor(min(p.y for p in points) / block + 1e-4),
-                               math.ceil(max(p.y for p in points) / block - 1e-4)):
-                    # Overlapping chunks or stacked pools: the top surface is seen.
-                    if tops.get((x, y), -math.inf) < level:
-                        tops[(x, y)] = level
+            faces.append((min(p.x for p in points), max(p.x for p in points), min(p.y for p in points),
+                          max(p.y for p in points), sum(p.z for p in points) / len(points)))
+    from .column_rays import ColumnRays, cells, grid_shift
+    # One texel per block of the world's own grid (MiEx centres blocks on whole numbers).
+    sx, sy = grid_shift([(face[0], face[2]) for face in faces], block)
+    tops = {}
+    for low_x, high_x, low_y, high_y, level in faces:
+        for x in cells(low_x, high_x, block, sx):
+            for y in cells(low_y, high_y, block, sy):
+                # Overlapping chunks or stacked pools: the top surface is seen.
+                if tops.get((x, y), -math.inf) < level:
+                    tops[(x, y)] = level
     if not tops:
         return None
     xs = [k[0] for k in tops]
@@ -62,12 +63,13 @@ def bake(scene, collection, water_objects):
     view_layer = bpy.context.view_layer if bpy.context.scene == scene else scene.view_layers[0]
     depsgraph = view_layer.depsgraph
     depsgraph.update()
+    rays = ColumnRays(scene, depsgraph, tops, block, MAX_DEPTH * block + 2 * block, upward=False, shift=(sx, sy))
     water_slots = {}
 
     def bed(origin, distance):
         start, remaining = origin.copy(), distance
         for _ in range(MAX_RAY_STEPS):
-            found, location, _normal, index, obj, _matrix = scene.ray_cast(
+            found, location, _normal, index, obj, _matrix = rays.ray_cast(
                 depsgraph, start, DOWN, distance=remaining)
             if not found:
                 return None
@@ -91,15 +93,11 @@ def bake(scene, collection, water_objects):
 
     texels = {}
     traced = 0
+    # Every column is traced: the same water gets the same depth map on any computer.
     truncated = False
-    deadline = time.perf_counter() + MAX_SECONDS
     for (x, y), level in tops.items():
         key = ((x - x0) // stride, (y - y0) // stride)
-        if time.perf_counter() >= deadline:
-            truncated = True
-            texels.setdefault(key, UNTRACED)
-            continue
-        center = Vector(((x + .5) * block, (y + .5) * block, level - epsilon))
+        center = Vector(((x + sx + .5) * block, (y + sy + .5) * block, level - epsilon))
         depth = bed(center, MAX_DEPTH * block)
         depth = MAX_DEPTH if depth is None else depth / block
         traced += 1
@@ -125,4 +123,4 @@ def bake(scene, collection, water_objects):
     image.update()
     image.pack()
     report = dict(blocks=len(tops), traced=traced, texels=len(texels), stride=stride, truncated=truncated)
-    return image, x0 * block, y0 * block, columns * stride * block, rows * stride * block, report
+    return image, (x0 + sx) * block, (y0 + sy) * block, columns * stride * block, rows * stride * block, report

@@ -2239,6 +2239,9 @@ class MCBEDROCK_preferences(AddonPreferences):
         row = layout.row()
         row.label(text=f"Current Version: {'.'.join(map(str, ADDON_VERSION))}")
         row.operator("mcbedrock.check_update", icon='FILE_REFRESH')
+        row = layout.row()
+        row.label(text="Thumbnails, pack icons and indexes")
+        row.operator("mcbedrock.clear_cache", icon='TRASH')
 
 classes = (
     MCBEDROCK_OT_check_update,

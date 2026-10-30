@@ -139,6 +139,11 @@ def update(scene):
     halation = tree.nodes[NODE + ' halation']
     if halation.type == 'MIX':
         set_value(halation.inputs[0], 'default_value', on)
+    # Off, the halation adds nothing (factor 0) but its glare still ran on every
+    # frame: most of the viewport compositor's cost. Muted, it is skipped.
+    glare = tree.nodes.get(NODE + ' halation glow')
+    if glare is not None:
+        set_value(glare, 'mute', not on)
     switch = tree.nodes.get(NODE + ' on')
     if switch is not None:
         set_value(switch.outputs[0], 'default_value', on)

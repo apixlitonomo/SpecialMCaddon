@@ -43,6 +43,11 @@ import nl.bramstout.mcworldexporter.world.LayeredBlock;
 
 
 public class MCAddonPreview extends Command {
+	// What Sparkle's preview reads (exporters/miex/preview.py decode_mesh). UVs,
+	// corner UVs and ambient occlusion only made each response longer to write
+	// here and to parse in Blender, where parsing holds up the interface.
+	private static final String[] PREVIEW_FIELDS = {"faceIndices", "vertices", "normals", "normalIndices", "colors", "colorIndices"};
+
 	private static int read(JsonObject row, String key, int fallback) {
 		return row.has(key) ? row.get(key).getAsInt() : fallback;
 	}
@@ -86,8 +91,14 @@ public class MCAddonPreview extends Command {
 						result.addProperty("chunkX", chunk.getChunkX());
 						result.addProperty("chunkZ", chunk.getChunkZ());
 						JsonArray meshes = new JsonArray();
-						for(Mesh mesh : previewer.getMeshes())
-							meshes.add(mesh.toJson());
+						for(Mesh mesh : previewer.getMeshes()) {
+							JsonObject full = mesh.toJson();
+							JsonObject lean = new JsonObject();
+							for(String field : PREVIEW_FIELDS)
+								if(full.has(field))
+									lean.add(field, full.get(field));
+							meshes.add(lean);
+						}
 						result.add("meshes", meshes);
 						synchronized(chunks) {
 							chunks.add(result);

@@ -99,6 +99,8 @@ class Theme:
     surface: Color = (28/255, 28/255, 28/255, 1.0)
     surface_raised: Color = (36/255, 36/255, 36/255, 1.0)
     surface_hover: Color = (42/255, 42/255, 42/255, 1.0)
+    # Buttons and segmented options under the pointer; clearer than surface_hover.
+    surface_lift: Color = (54/255, 54/255, 54/255, 1.0)
     surface_pressed: Color = (24/255, 24/255, 24/255, 1.0)
     border: Color = (48/255, 48/255, 48/255, 1.0)
     selected: Color = (32/255, 44/255, 64/255, 1.0)
@@ -539,7 +541,8 @@ class Button(Widget):
         ))
 
     def draw(self, renderer, state: dict, theme: Theme) -> None:
-        hovered = False
+        # Buttons lift under the pointer, like Blender's own; rows and sections do not.
+        hovered = bool(self.style.enabled) and state.get("_runtime_hover") == self.key
         pressed = state.get("_runtime_pressed") == self.key
         focused = state.get("_runtime_focus") == self.key and state.get("_focus_visible", False)
         if not self.style.enabled:
@@ -565,7 +568,7 @@ class Button(Widget):
         if self.style.ghost and not self.primary:
             base = theme.canvas
         if self.style.enabled and not pressed:
-            background = blend(base, theme.accent_hover if self.primary else theme.surface_hover, hover)
+            background = blend(base, theme.accent_hover if self.primary else theme.surface_lift, hover)
         border = theme.text_muted if focused and getattr(self, "show_focus_outline", True) else self.style.border
         renderer.rect(self.rect, background, radius=theme.radius,
                       border=border, border_width=1.0)

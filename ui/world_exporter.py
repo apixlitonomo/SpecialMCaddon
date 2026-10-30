@@ -586,11 +586,15 @@ def _before_load(_unused):
     world_exporter_canvas.reset()
 
 
-def start_job(context, action, **extra):
+def start_job(context, action, stack=None, **extra):
+    """``stack``: (name, path) packs to use instead of the scene's, for map and
+    3D requests while a changed pack stack waits for Reload."""
     global _job
     if busy():
         return False
     snapshot = _snapshot(context)
+    if stack is not None:
+        snapshot['packs'] = [dict(name=name, path=bpy.path.abspath(path)) for name, path in stack]
     if action == 'EXPORT':
         validate_region(snapshot['region'])
         for region in snapshot['extra_regions']:

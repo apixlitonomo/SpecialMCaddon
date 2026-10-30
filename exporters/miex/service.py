@@ -113,6 +113,9 @@ class Session:
         environment = os.environ.copy()
         multimc = next((r['path'] for r in roots if r['kind']=='multimc'), None)
         if multimc:environment.setdefault('MIEX_MULTIMC_ROOT_DIR',multimc)
+        # MiEx keeps four cores free for its own window, which Sparkle never
+        # shows: a four-core laptop meshed chunks on one thread. Keep one for Blender.
+        environment.setdefault('MIEX_NUM_UI_THREADS','1')
         # Exit on heap exhaustion: otherwise MiEx's Swing timer keeps a broken JVM alive,
         # holding its heap and burning CPU in garbage collection, and later requests hang.
         args = [self.java, '-Xmx%dG' % self.memory, '-XX:+ExitOnOutOfMemoryError', '-Dfile.encoding=UTF-8',

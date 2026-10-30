@@ -164,31 +164,55 @@ public class MCAddonMiEx {
         }
     }
     public static class MapChunks extends Command {
+        // One task per chunk on MiEx's map pool, as its own getChunk command
+        // does; one thread rendered every tile of a request before. Rows keep
+        // the requested order, and the first failing chunk still fails it.
         public JsonObject run(JsonObject cmd) {
-            JsonArray rows = new JsonArray();
-            for (JsonElement element : cmd.getAsJsonArray("chunks")) {
-                JsonObject coordinate = element.getAsJsonObject();
-                int x = coordinate.get("chunkX").getAsInt(), z = coordinate.get("chunkZ").getAsInt();
-                try {
-                    nl.bramstout.mcworldexporter.world.Chunk chunk = MCWorldExporter.getApp().getWorld().getChunk(x,z);
-                    if (chunk == null) continue;
-                    chunk.load();
-                    // CLI getChunk skips height calculation on Bedrock chunks without a stored heightmap.
-                    // Use the same full image render requested by MiEx's interactive map.
-                    chunk.setFullReRender(true);
-                    chunk.setRenderRequested(true);
-                    chunk.renderChunkImage();
-                    java.awt.image.BufferedImage img = chunk.getChunkImage();
-                    if (img == null) continue;
-                    JsonObject row = new JsonObject();
-                    row.addProperty("chunkX",x); row.addProperty("chunkZ",z);
-                    row.addProperty("image",Util.toBase64(img.getRGB(0,0,16,16,null,0,16)));
-                    short[] heights = chunk._getHeightmap();
-                    if (heights != null) row.addProperty("heightmap",Util.toBase64(heights));
-                    rows.add(row);
-                } catch (Exception ex) { throw new RuntimeException("Cannot render chunk " + x + ", " + z + ": " + ex, ex); }
+            JsonArray requested = cmd.getAsJsonArray("chunks");
+            final int count = requested.size();
+            final JsonObject[] rows = new JsonObject[count];
+            final RuntimeException[] errors = new RuntimeException[count];
+            Map<Long, Integer> first = new HashMap<>();
+            int[] sameAs = new int[count];
+            List<nl.bramstout.mcworldexporter.parallel.ThreadPool.Task> tasks = new ArrayList<>();
+            for (int i = 0; i < count; i++) {
+                JsonObject coordinate = requested.get(i).getAsJsonObject();
+                final int x = coordinate.get("chunkX").getAsInt(), z = coordinate.get("chunkZ").getAsInt();
+                // A chunk asked for twice is rendered once: two tasks must not share one chunk.
+                Integer earlier = first.putIfAbsent(((long) x << 32) ^ (z & 0xffffffffL), i);
+                sameAs[i] = earlier == null ? i : earlier;
+                if (earlier != null) continue;
+                final int index = i;
+                tasks.add(nl.bramstout.mcworldexporter.ui.Renderer2D.threadPool.submit(() -> {
+                    try { rows[index] = mapChunk(x, z); }
+                    catch (Exception ex) { errors[index] = new RuntimeException("Cannot render chunk " + x + ", " + z + ": " + ex, ex); }
+                }));
             }
-            JsonObject result = new JsonObject(); result.add("chunks",rows); return result;
+            for (nl.bramstout.mcworldexporter.parallel.ThreadPool.Task task : tasks) task.waitUntilTaskIsDoneFast();
+            JsonArray out = new JsonArray();
+            for (int i = 0; i < count; i++) {
+                if (errors[sameAs[i]] != null) throw errors[sameAs[i]];
+                if (rows[sameAs[i]] != null) out.add(rows[sameAs[i]]);
+            }
+            JsonObject result = new JsonObject(); result.add("chunks",out); return result;
+        }
+        static JsonObject mapChunk(int x, int z) throws Exception {
+            nl.bramstout.mcworldexporter.world.Chunk chunk = MCWorldExporter.getApp().getWorld().getChunk(x,z);
+            if (chunk == null) return null;
+            chunk.load();
+            // CLI getChunk skips height calculation on Bedrock chunks without a stored heightmap.
+            // Use the same full image render requested by MiEx's interactive map.
+            chunk.setFullReRender(true);
+            chunk.setRenderRequested(true);
+            chunk.renderChunkImage();
+            java.awt.image.BufferedImage img = chunk.getChunkImage();
+            if (img == null) return null;
+            JsonObject row = new JsonObject();
+            row.addProperty("chunkX",x); row.addProperty("chunkZ",z);
+            row.addProperty("image",Util.toBase64(img.getRGB(0,0,16,16,null,0,16)));
+            short[] heights = chunk._getHeightmap();
+            if (heights != null) row.addProperty("heightmap",Util.toBase64(heights));
+            return row;
         }
     }
     static String[] strings(JsonObject cmd, String key, String[] defaults) {

@@ -153,6 +153,11 @@ def hover_mix(state,key,duration=.14):
     return tween(state,key+'.emphasis',float(active),duration)
 
 
+def pointer_mix(state,key,duration=.12):
+    """Eased 0..1 hover for buttons and segmented options (not rows or sections)."""
+    return tween(state,key+'.hover',float(state.get('_runtime_hover')==key),duration)
+
+
 class SkySectionHeader(Button):
     def __init__(self,key,title,state):
         self.expanded=state.get('sky.section.open.'+key,key=='lighting')
@@ -211,9 +216,9 @@ class SkyGroup(Column):
 class QuietButton(Button):
     """Low-emphasis text action for rare, page-level commands."""
     def draw(self,renderer,state,theme):
-        hover=hover_mix(state,self.key)
+        hover=max(hover_mix(state,self.key),pointer_mix(state,self.key))
         if hover>.01:
-            renderer.rect(self.rect,theme.surface_hover[:3]+(hover,),radius=4)
+            renderer.rect(self.rect,theme.surface_lift[:3]+(hover,),radius=4)
         renderer.text(self.rect,self.text,blend(theme.text_muted,theme.text,hover),size=11.5,weight='Medium',align='CENTER',cap_center=True)
         if state.get('_runtime_focus')==self.key and state.get('_focus_visible'):
             focus_ring(renderer,self.rect,state,self.key,theme)
@@ -244,7 +249,9 @@ class Segment(Button):
         self.primary=selected
 
     def draw(self,renderer,state,theme):
-        hover=hover_mix(state,self.key)
+        hover=max(hover_mix(state,self.key),pointer_mix(state,self.key))
+        if not self.selected and hover>.01:
+            renderer.rect(self.rect,theme.surface_lift[:3]+(hover,),radius=3)
         color=(1,1,1,1) if self.selected else blend(theme.text_muted,theme.text,hover)
         size=11 if self.rect.width<90 else 11.5
         if text_width(renderer,self.text,size)>self.rect.width-8:size=9.5

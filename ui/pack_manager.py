@@ -166,6 +166,49 @@ def _library_catalog_path():
     return os.path.join(os.path.dirname(_manual_catalog_path()), 'installed_packs_scoped.json')
 
 
+def _favorites_catalog_path():
+    return os.path.join(os.path.dirname(_manual_catalog_path()), 'favorite_packs.json')
+
+
+_favorites = {'paths': None, 'revision': 0}
+
+
+def favorite_packs():
+    """Normalized paths of the packs starred as favourites, in every .blend."""
+    if _favorites['paths'] is None:
+        _favorites['paths'] = {_normalized_path(item['path']): os.path.abspath(item['path'])
+                               for item in _load_manual_catalog(_favorites_catalog_path())}
+    return _favorites['paths']
+
+
+def is_favorite(path):
+    return bool(path) and _normalized_path(path) in favorite_packs()
+
+
+def favorites_revision():
+    """Changes whenever a pack is starred or unstarred (cached lists key on it)."""
+    return _favorites['revision']
+
+
+def set_favorite(path, favorite):
+    paths = favorite_packs()
+    key = _normalized_path(path)
+    if favorite == (key in paths):
+        return False
+    if favorite:
+        paths[key] = os.path.abspath(path)
+    else:
+        paths.pop(key, None)
+    _save_manual_catalog([{'path': value} for value in sorted(paths.values())], _favorites_catalog_path())
+    _favorites['revision'] += 1
+    return True
+
+
+def favorites_first(entries, path=lambda entry: entry[1].path):
+    """Favourites move to the top; the order is otherwise kept."""
+    return sorted(entries, key=lambda entry: not is_favorite(path(entry)))
+
+
 def _excluded_catalog_path():
     return os.path.join(os.path.dirname(_manual_catalog_path()), 'excluded_packs.json')
 
@@ -1767,6 +1810,32 @@ def path_missing(path, fresh=False):
     return not _exists_cached(path)
 
 
+def prune_missing_packs():
+    """Refresh forgets library packs whose folder or file is gone. Enabled packs
+    stay in the stack, where they show Missing with Locate… (an unplugged drive,
+    a .blend opened on another computer). Returns how many were forgotten."""
+    removed = set()
+    for catalog in (_manual_catalog_path(), _library_catalog_path()):
+        entries = _load_manual_catalog(catalog)
+        gone = {_normalized_path(item['path']) for item in entries if path_missing(item['path'], fresh=True)}
+        if gone:
+            _save_manual_catalog([item for item in entries if _normalized_path(item['path']) not in gone], catalog)
+            removed |= gone
+    for scene in bpy.data.scenes:
+        changed = False
+        for collection in (scene.mcbedrock_discovered_packs, scene.mcbedrock_manual_packs):
+            for index in range(len(collection) - 1, -1, -1):
+                if path_missing(collection[index].path, fresh=True):
+                    removed.add(_normalized_path(collection[index].path))
+                    collection.remove(index)
+                    changed = True
+        if changed:
+            scene.mcbedrock_discovered_pack_index = -1
+    if removed:
+        _list_click.update(index=-1, time=0.0)
+    return len(removed)
+
+
 def active_pack_missing(item, fresh=False):
     """True when neither an enabled pack's folder nor its source file exists any more."""
     path = getattr(item, 'path', '') or ''
@@ -1988,12 +2057,19 @@ class MCBEDROCK_OT_scan_packs(Operator):
     """Scan common Minecraft folders for resource packs."""
     bl_idname = "mcbedrock.scan_resource_packs"
     bl_label = "Scan for Packs"
-    bl_options = {"REGISTER"}
+    bl_options = {"REGISTER", "UNDO"}
     background: bpy.props.BoolProperty(default=False, options={'HIDDEN','SKIP_SAVE'})
+    prune: bpy.props.BoolProperty(
+        default=False, options={'HIDDEN','SKIP_SAVE'},
+        description="Forget library packs whose folder or file is gone (the Refresh button)")
 
     def execute(self, context):
         from ..importers.path_discovery import discover_all_roots_and_archives
 
+        if self.prune:
+            gone = prune_missing_packs()
+            if gone:
+                self.report({'INFO'}, f"Removed {gone} missing pack{'s' if gone != 1 else ''} from the list")
         if self.background:
             # An explicit refresh replaces an in-flight scan as well.
             _stop_startup_scan()
@@ -2195,6 +2271,28 @@ class MCBEDROCK_OT_exclude_pack(Operator):
         return {'FINISHED'}
 
 
+class MCBEDROCK_OT_favorite_pack(Operator):
+    """Star a resource pack so it lists first; starring never changes pack priority"""
+    bl_idname = "mcbedrock.favorite_pack"
+    bl_label = "Favorite Pack"
+    bl_options = {"REGISTER"}
+    filepath: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    favorite: bpy.props.BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, context):
+        if not self.filepath:
+            return {'CANCELLED'}
+        try:
+            set_favorite(self.filepath, self.favorite)
+        except OSError as exc:
+            self.report({'ERROR'}, 'Could not save favourites: %s' % exc)
+            return {'CANCELLED'}
+        for window in context.window_manager.windows:
+            for area in window.screen.areas:
+                area.tag_redraw()
+        return {'FINISHED'}
+
+
 class MCBEDROCK_OT_open_pack_location(Operator):
     """Open this pack's location in the system file explorer."""
     bl_idname = "mcbedrock.open_pack_location"
@@ -2225,25 +2323,72 @@ class MCBEDROCK_OT_open_pack_location(Operator):
         return {"FINISHED"}
 
 
+# Rebuilt whenever they are needed. Left alone: extracted pack archives (the
+# pack stack points into them), copies of dropped mod JARs (one may be the only
+# copy left) and MiEx exports.
+CACHE_FOLDERS = ("thumbs", "mod_thumbnails", "index", "mod_catalogs")
+
+
+def cache_paths():
+    """(folders, files) Clear Cache deletes."""
+    from ..importers.archive_extractor import user_cache_dir
+    folders = [user_cache_dir(name) for name in CACHE_FOLDERS]
+    folders += [_pack_icon_cache_dir(), os.path.join(_cache_dir(), "pack_icons"),
+                os.path.join(_addon_dir(), "mc_thumb_cache")]
+    return folders, [_metadata_cache_path()]
+
+
+def cache_size():
+    folders, files = cache_paths()
+    total = 0
+    for path in files:
+        try:
+            total += os.path.getsize(path)
+        except OSError:
+            pass
+    for folder in folders:
+        for root, _dirs, names in os.walk(folder):
+            for name in names:
+                try:
+                    total += os.path.getsize(os.path.join(root, name))
+                except OSError:
+                    pass
+    return total
+
+
 class MCBEDROCK_OT_clear_cache(Operator):
-    """Delete the entire pack metadata/icon cache folder."""
+    """Delete Sparkle's thumbnails, pack icons and pack indexes. They are made again when needed"""
     bl_idname = "mcbedrock.clear_cache"
     bl_label = "Clear Cache"
     bl_options = {"REGISTER"}
 
     def invoke(self, context, event):
-        return context.window_manager.invoke_confirm(self, event)
+        size = cache_size()
+        amount = f"{size / 1e6:.1f} MB" if size >= 1e5 else f"{size / 1e3:.0f} KB"
+        return context.window_manager.invoke_confirm(
+            self, event, title="Clear Sparkle Cache",
+            message=f"Delete {amount} of thumbnails, pack icons and indexes? "
+                    "Sparkle makes them again when they are needed.",
+            confirm_text="Clear Cache", icon='WARNING')
 
     def execute(self, context):
         global _pack_previews
-        path = _cache_dir()
-        try:
-            if os.path.isdir(path):
-                shutil.rmtree(path, ignore_errors=True)
-            os.makedirs(_pack_icon_cache_dir(), exist_ok=True)
-        except Exception as exc:
-            self.report({"ERROR"}, f"Could not clear cache: {exc}")
-            return {"CANCELLED"}
+        from . import asset_browser, mod_thumbnails
+        from .gpu_framework.renderer import forget_images
+        from ..importers.browser_thumbnail_cache import forget_lookups
+        # Workers write into these folders: stop them first.
+        asset_browser._stop_worker(kill=True)
+        mod_thumbnails.cancel()
+        folders, files = cache_paths()
+        for folder in folders:
+            shutil.rmtree(folder, ignore_errors=True)
+        for path in files:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        left = [path for path in folders + files if os.path.exists(path)]
+        os.makedirs(_pack_icon_cache_dir(), exist_ok=True)
         # Drop loaded previews so freed icon files are not referenced.
         if _pack_previews is not None and _preview_module is not None:
             try:
@@ -2251,7 +2396,16 @@ class MCBEDROCK_OT_clear_cache(Operator):
             except Exception:
                 pass
             _pack_previews = None
-        self.report({"INFO"}, "Cache cleared")
+        asset_browser._clear_thumb_previews()
+        forget_images()
+        forget_lookups()
+        for window in context.window_manager.windows:
+            for area in window.screen.areas:
+                area.tag_redraw()
+        if left:
+            self.report({"WARNING"}, "Some cache files are in use and were kept: " + ", ".join(left[:3]))
+        else:
+            self.report({"INFO"}, "Cache cleared")
         return {"FINISHED"}
 
 
@@ -2950,6 +3104,7 @@ classes = (
     MCBEDROCK_OT_open_pack_location,
     MCBEDROCK_OT_exclude_pack,
     MCBEDROCK_OT_clear_cache,
+    MCBEDROCK_OT_favorite_pack,
     MCBEDROCK_OT_add_pack_to_active,
     MCBEDROCK_OT_move_active_pack_up,
     MCBEDROCK_OT_reorder_schematic_pack,

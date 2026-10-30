@@ -229,6 +229,11 @@ class PackRow(Row):
         else:
             renderer.text(badge,edition,badge_text,size=10,weight='SemiBold',align='CENTER')
         font_size=14 if self.rect.width>=330 else 12 if self.rect.width>=280 else 11
+        from .pack_manager import is_favorite
+        if is_favorite(self.item.path) and width>40:
+            # A favourite says so beside its switch; starring never reorders the stack.
+            renderer.image(Rect(x+width-12,self.rect.y+(self.rect.height-12)/2,12,12),str(ICONS/'star-fill.png'),tint=theme.accent_hover)
+            width-=18
         pack_name(renderer,Rect(x,self.rect.y+(17 if self.identity else 7),width,28 if self.identity else 32),self.item.name,theme,font_size)
         if self.identity:
             renderer.text(Rect(x,self.rect.y+3,width,12),self.identity,theme.text_muted,size=9 if self.rect.width<280 else 10)
@@ -913,16 +918,21 @@ def build_packs(context,state):
     discovered=scene.mcbedrock_discovered_packs
     active_paths={packs._normalized_path(p.source_path or p.path)
                   for p in scene.mcbedrock_active_packs}
-    head=(len(discovered), discovered[0].path if discovered else '', frozenset(active_paths))
+    # A new library (another scene, a finished scan) starts at the top. Excluding
+    # or switching a pack keeps the place: the scroll view clamps a shorter list.
+    head=(scene.as_pointer(), scene.get('_mcbedrock_pack_scan_revision', 0))
     if state.get('packs.library.head') != head:
         state.pop('packs.library.scroll',None)
-        state.pop('packs.context',None)
         state['packs.library.head']=head
+    rows_key=(len(discovered), discovered[0].path if discovered else '', frozenset(active_paths))
+    if state.get('packs.library.rows') != rows_key:
+        state.pop('packs.context',None)  # a menu names its row by index
+        state['packs.library.rows']=rows_key
     def refresh(ctx):
         state['packs.group.active'] = False
         state['packs.group.inactive'] = False
         state['_tree_dirty'] = True
-        return invoke('mcbedrock.scan_resource_packs',invoke=False,background=True)(ctx)
+        return invoke('mcbedrock.scan_resource_packs',invoke=False,background=True,prune=True)(ctx)
     search=search_row('packs.search',scene,'mcbedrock_pack_search','Search resource packs...',trailing=(
         *([PackFilterDropdown(scene, state)] if packs.PACK_CONTENT_FILTERS_ENABLED else []),
         IconButton('packs.add','folder',invoke('mcbedrock.add_resource_pack_folder',background=True),
@@ -943,7 +953,7 @@ def build_packs(context,state):
     visible_count=0
     heading_count=0
     for group,label,enabled in (('active','Active',True),('inactive','Inactive',False)):
-        entries=[(i,p) for i,p in matched if (packs._normalized_path(p.path) in active_paths)==enabled]
+        entries=packs.favorites_first([(i,p) for i,p in matched if (packs._normalized_path(p.path) in active_paths)==enabled])
         if not entries:
             continue
         heading=PackGroupHeading(group,label,state,bool(scene.mcbedrock_pack_search.strip()))
@@ -1330,7 +1340,10 @@ def context_menu(context,state):
     item=next((item for item in packs if _normalized_path(item.path)==_normalized_path(path or '')),None)
     if item is None:
         return None
-    choices=[('folder','Open pack location'),
+    from .pack_manager import is_favorite
+    favorite=is_favorite(item.path)
+    choices=[('favorite','Remove from favorites' if favorite else 'Add to favorites'),
+             ('folder','Open pack location'),
              ('exclude','Remove from list' if item.launcher=='Manual' else 'Exclude from list')]
     def choose(ctx,value):
         from .styled_pages import invoke
@@ -1339,7 +1352,10 @@ def context_menu(context,state):
                       if _normalized_path(item.path)==_normalized_path(path)),None)
         if current is None:
             return
-        if value=='folder':
+        if value=='favorite':
+            invoke('mcbedrock.favorite_pack',invoke=False,filepath=path,favorite=not favorite)(ctx)
+            state['_tree_dirty']=True
+        elif value=='folder':
             invoke('mcbedrock.open_pack_location',invoke=False,index=current)(ctx)
         elif value=='exclude':
             invoke('mcbedrock.exclude_pack',invoke=False,filepath=path)(ctx)

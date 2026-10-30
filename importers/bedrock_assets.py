@@ -759,8 +759,7 @@ def asset_resource_roots(context, json_filepath=""):
                 if parent == current:
                     break
                 current = parent
-        roots = (_stack_roots_for_lookup(root) or [root]) if root else []
-        return _dedupe_paths(resolve_roots(roots, selections(scene)))
+        return _dedupe_paths(resolve_roots(layered_browser_roots(scene, root, absolute), selections(scene)))
     for pack in getattr(scene, "mcbedrock_active_packs", ()):
         path = getattr(pack, "path", "")
         if path:
@@ -789,9 +788,57 @@ def asset_resource_roots(context, json_filepath=""):
     return _dedupe_paths(resolve_roots(search_roots, selections(scene)))
 
 
+def _pack_edition(root):
+    """'java' or 'bedrock' for a pack root, else None."""
+    if os.path.isfile(os.path.join(root, "pack.mcmeta")):
+        return "java"
+    if os.path.isfile(os.path.join(root, "manifest.json")):
+        return "bedrock"
+    return None
+
+
+def layered_browser_roots(scene, root, absolute=os.path.abspath):
+    """The roots a browsed pack's imports and thumbnails resolve through.
+
+    A pack switched on in the stack also takes the packs of its edition stacked
+    above it, in priority order: a texture pack over a model pack retextures that
+    pack's models, as schematic imports and MiEx exports do. Packs below it, or
+    missing, change nothing, so thumbnails stay valid when they are switched. A
+    pack that is not switched on keeps its own look. Thumbnail workers get the
+    stack as plain roots."""
+    if not root:
+        return []
+    stack = [absolute(pack.path) for pack in getattr(scene, "mcbedrock_active_packs", ()) or ()
+             if getattr(pack, "path", "")]
+    if not stack and hasattr(scene, "get"):
+        try:
+            stack = [path for path in json.loads(scene.get("_mcbedrock_resource_roots", "[]"))
+                     if isinstance(path, str) and path]
+        except (ValueError, TypeError):
+            stack = []
+    key = os.path.normcase(os.path.abspath(root))
+    own = _stack_roots_for_lookup(root) or [root]
+    position = next((i for i, path in enumerate(stack) if os.path.normcase(os.path.abspath(path)) == key), None)
+    if position is None:
+        return own
+    editions = {_pack_edition(path) for path in own} - {None}
+    roots = []
+    for path in stack[:position]:
+        roots.extend(child for child in _stack_roots_for_lookup(path)
+                     if not editions or _pack_edition(child) in editions)
+    roots.extend(own)
+    seen, unique = set(), []
+    for path in roots:
+        normal = os.path.normcase(os.path.abspath(path))
+        if normal not in seen:
+            seen.add(normal)
+            unique.append(path)
+    return unique
+
+
 @contextmanager
 def browser_pack_scope(context):
-    """Browser imports use their selected pack, independently of schematic layers."""
+    """Browser imports resolve through their selected pack (and the stack above it when it is on)."""
     scene = context.scene
     key = '_mcbedrock_asset_browser_root'
     previous = scene.get(key)

@@ -57,6 +57,9 @@ class State:
         self.failed = False
         self.pending = None
         self.signature = None
+        # The pack stack the map was loaded with; another one waits for Reload.
+        self.loaded_stack = None
+        self.packs_changed = False
         self.map_rect = Rect(250,46,800,700)
         self.targets = []
         self.hover = (0,0)
@@ -281,6 +284,7 @@ def world_loaded(scene, info):
     s = state(scene)
     settings = scene.mcbedrock_world_exporter
     s.signature = signature(settings)
+    s.loaded_stack, s.packs_changed = s.signature[4], False
     first_load = not s.loaded
     s.loaded = True
     if first_load:
@@ -358,12 +362,18 @@ def tick(context, s):
     current = signature(settings)
     if s.signature != current:
         changed_world = s.signature is None or s.signature[0] != current[0]
-        invalidate(context.scene)
-        if changed_world:
-            s.loaded = False
-            s.ui_ready = False
-        elif s.loaded and not ui.foreground_busy():
-            settings.status='Map paused · Resume map to refresh' if s.paused else 'Refreshing map…'
+        if s.loaded and not changed_world and s.signature[:4] == current[:4] and s.loaded_stack is not None:
+            # Packs are often switched several in a row: each switch reloaded the
+            # whole world. The map keeps the packs it was loaded with and a Reload
+            # button shows; switching back to them hides it again.
+            s.packs_changed = current[4] != s.loaded_stack
+        else:
+            invalidate(context.scene)
+            if changed_world:
+                s.loaded = False
+                s.ui_ready = False
+            elif s.loaded and not ui.foreground_busy():
+                settings.status='Map paused · Resume map to refresh' if s.paused else 'Refreshing map…'
         s.signature = current
     # Pages are only uploaded by the flat map's draw; the full 3D view never takes them.
     if s.loaded and s.preview.shown<1:world_map_renderer.prepare_pages(s)
@@ -373,20 +383,22 @@ def tick(context, s):
     # The preview first asks for the area's missing map tiles (surface heights), then its rows.
     tiles = s.preview.next_tiles(s) if s.preview.on and s.loaded and not s.pending else []
     rows = s.preview.next_rows() if s.preview.on and s.loaded and not s.pending and not tiles else []
+    # Until Reload, the map and the 3D view ask with the packs they were loaded with.
+    stack = s.loaded_stack if s.packs_changed else None
     if s.pending:
         action,s.pending = s.pending,None
         ui.start_job(context,action)
     elif tiles:
-        ui.start_job(context,'MAP',map_epoch=s.epoch,chunks=[dict(chunkX=x,chunkZ=z) for x,z in tiles])
+        ui.start_job(context,'MAP',map_epoch=s.epoch,chunks=[dict(chunkX=x,chunkZ=z) for x,z in tiles],stack=stack)
         s.last_request = time.monotonic()
     elif rows:
-        ui.start_job(context,'PREVIEW',preview_epoch=s.preview.epoch,chunks=rows)
+        ui.start_job(context,'PREVIEW',preview_epoch=s.preview.epoch,chunks=rows,stack=stack)
     elif s.loaded and not s.preview.on and not s.paused and not s.failed and time.monotonic()-s.last_request>.1:
         rect = s.map_rect
         from itertools import islice
         missing = list(islice((p for p in s.visible() if p not in s.tiles),64))
         if missing:
-            ui.start_job(context,'MAP',map_epoch=s.epoch,chunks=[dict(chunkX=x,chunkZ=z) for x,z in missing])
+            ui.start_job(context,'MAP',map_epoch=s.epoch,chunks=[dict(chunkX=x,chunkZ=z) for x,z in missing],stack=stack)
             s.last_request = time.monotonic()
 
 
@@ -487,8 +499,20 @@ class Painter:
         return tween(self.s.motion,'miex.'+key,float(target),duration)
 
     def hovered(self,rect):
-        # Hover changes nothing visually; tooltips track the pointer on their own.
-        return False
+        """The pointer is over this control (never while dragging)."""
+        if self.s.drag:return False
+        hit=rect.intersect(self.clip) if self.clip else rect
+        return hit.width>0 and hit.height>0 and hit.contains(*self.s.hover)
+
+    def lift(self,rect,action,enabled=True):
+        """Eased 0..1 hover of a button or segmented option; an open menu takes it."""
+        return self.ease('hover.'+repr(action),enabled and not self.s.menu and self.hovered(rect),.12)
+
+    def wash(self,rect,action,enabled=True,radius=CONTROL_RADIUS-1):
+        """The lift behind an unselected option under the pointer; returns its amount."""
+        lift=self.lift(rect,action,enabled)
+        if lift>.01:self.r.rect(rect,T.surface_lift[:3]+(lift,),radius=radius)
+        return lift
 
     def pressed(self,action):
         """Short tactile darkening after a click, independent of hover."""
@@ -526,6 +550,7 @@ class Painter:
 
     def icon_button(self,rect,icon,action,tip=''):
         enabled=not action_locked(self.s,action)
+        self.wash(rect,action,enabled,CONTROL_RADIUS)
         self.icon(rect,icon,T.text if enabled else T.text_muted,12)
         self.ring(rect,action)
         if enabled:self.target(rect,action);self.tip(rect,tip)
@@ -541,6 +566,8 @@ class Painter:
         # A disabled primary keeps its place but drops to the raised grey with a muted label.
         if active and not enabled:fill=base
         press=self.pressed(action) if enabled else 0.
+        lift=self.lift(rect,action,enabled)
+        if lift and not press:fill=blend_color(fill,T.accent_hover if active else T.surface_lift,lift)
         if press:fill=blend_color(fill,T.accent_pressed if active else T.surface_pressed,press*.6)
         self.r.rect(rect,fill,radius=radius)
         if enabled:self.ring(rect,action,radius)
@@ -636,7 +663,8 @@ class Painter:
         for i,(label,action,active) in enumerate(options):
             cell=Rect(rect.x+i*width,rect.y,width,rect.height)
             enabled=not action_locked(self.s,action)
-            color=((1,1,1,1) if active else T.text_muted) if enabled else T.text_muted[:3]+(.6,)
+            lift=0. if active else self.wash(cell.inset((2,2,2,2)),action,enabled)
+            color=((1,1,1,1) if active else blend_color(T.text_muted,T.text,lift)) if enabled else T.text_muted[:3]+(.6,)
             self.r.text(cell,label,color,size=size,weight='SemiBold' if active else 'Medium',align='CENTER')
             if self.focused(action):self.r.rect(cell.inset((2,2,2,2)),(0,0,0,0),radius=CONTROL_RADIUS,border=FOCUS,border_width=1.5)
             if enabled:self.target(cell,action)
@@ -746,11 +774,14 @@ def draw_tooltip(paint,s):
 
 
 def hover_redraw(s):
-    """Hover changes nothing but tooltips: passive motion redraws only when the
-    tooltip under the pointer changes or one is showing (it follows the pointer)."""
-    if s.menu:return False
+    """Passive motion redraws only when the control under the pointer changes
+    (buttons and options lift) or a tooltip changes or shows (it follows the pointer)."""
+    control=next((action for rect,action in reversed(s.targets) if rect.contains(*s.hover)),None)
+    moved_on=control!=getattr(s,'hover_target',None)
+    s.hover_target=control
+    if s.menu:return moved_on
     under=next((text for rect,text in reversed(s.tips) if rect.contains(*s.hover)),None)
-    return under!=s.tip_text or (under is not None and s.tip_shown)
+    return moved_on or under!=s.tip_text or (under is not None and s.tip_shown)
 
 
 def leave_hover(s):
@@ -930,11 +961,19 @@ def menu_items(context,s):
         return [(item.name,('water_preset',item.identifier))
                 for item in settings.bl_rna.properties['water_preset'].enum_items]
     if s.menu=='pack actions':
+        from .pack_manager import is_favorite
         packs=context.scene.mcbedrock_active_packs
         index=next((i for i,p in enumerate(packs) if p.path==getattr(s,'context_pack',None)),-1)
-        if index<0:return []
-        return [(label,('stack',s.context_pack,target)) for label,target in
-                [('Move up',index-1),('Move down',index+1),('Move to top',0)] if 0<=target<len(packs) and target!=index]+[('Remove from active stack',('stack_remove',s.context_pack))]
+        key=getattr(s,'context_pack_key',None)
+        rows=[]
+        if index>=0:
+            rows=[(label,('stack',s.context_pack,target)) for label,target in
+                  [('Move up',index-1),('Move down',index+1),('Move to top',0)] if 0<=target<len(packs) and target!=index]+[('Remove from active stack',('stack_remove',s.context_pack))]
+        if key:
+            favorite=is_favorite(key)
+            rows.append(('Remove from favorites' if favorite else 'Add to favorites',('pack_favorite',key,not favorite),
+                         dict(divider=True) if rows else {}))
+        return rows
     if s.menu=='preview actions':
         from .world_exporter_preview import menu_items as preview_items
         return preview_items(s)
@@ -1031,6 +1070,7 @@ def _draw_menu(context,paint,s):
         highlighted=s.worlds_keyboard_focus and s.menu_index==s.menu_scroll+i
         enabled=not action_locked(s,cmd)
         if highlighted:r.rect(cell,T.selected,radius=4)
+        elif enabled and not s.drag and cell.contains(*s.hover):r.rect(cell,T.surface_lift,radius=4)
         if extra.get('checked'):paint.icon(Rect(cell.x+4,cell.y,16,row),'check',T.accent_hover,12)
         color=T.text if enabled else T.text_muted
         r.text(Rect(cell.x+26,cell.y,cell.width-34,row),label,color,size=12)
@@ -1214,7 +1254,7 @@ def action(context,s,cmd):
     elif kind=='browse':
         s.menu=None
         bpy.ops.mcbedrock.world_browse('INVOKE_DEFAULT',target=cmd[1])
-    elif kind=='scan':bpy.ops.mcbedrock.scan_resource_packs('EXEC_DEFAULT',background=True)
+    elif kind=='scan':bpy.ops.mcbedrock.scan_resource_packs('EXEC_DEFAULT',background=True,prune=True)
     elif kind=='import':
         settings.status='Importing world into Blender…'
         ui._schedule_import(context.scene,context.window)
@@ -1235,6 +1275,7 @@ def action(context,s,cmd):
         workspace=next((w for w in bpy.data.workspaces if w.name=='Layout'),None)
         if workspace is None:workspace=next((w for w in bpy.data.workspaces if not w.get(KEY)),None)
         if workspace:context.window.workspace=workspace
+    elif kind=='pack_favorite':bpy.ops.mcbedrock.favorite_pack('EXEC_DEFAULT',filepath=cmd[1],favorite=cmd[2])
     elif kind in {'stack','stack_remove'}:
         packs=context.scene.mcbedrock_active_packs
         index=next((i for i,p in enumerate(packs) if p.path==cmd[1]),-1)
@@ -1423,7 +1464,8 @@ def handle_event(context,s,event):
     if event.type=='RIGHTMOUSE' and event.value=='PRESS' and s.ui_ready and not s.menu and s.inspector_open and not s.drag:
         card=pack_card_at(s,x,y)
         if card is not None:
-            if card[2]:s.context_pack=card[2];action(context,s,('menu','pack actions'))
+            s.context_pack,s.context_pack_key=card[2],card[1]
+            action(context,s,('menu','pack actions'))
             return
     if event.type=='ESC' and event.value=='PRESS' and s.drag:
         if s.drag_snapshot:restore_selection(settings,s.drag_snapshot)

@@ -42,6 +42,8 @@ DOME_BOOST = {'BLENDER_EEVEE': .3, 'CYCLES': .7}
 FOG_PLANES = dict(near=96., far=300., density=.35, count=6, top=16., fade=24., soft=6.,
                   glow=.4, glow_spread=35., color_mode='AUTO', relative_top=True, edge=True)
 FOG_PLANES_TAG = 'mc_sky_fog_planes'
+# On the sky's compositor: the scene's own compositor it was copied from.
+COMPOSITOR_SOURCE = 'mc_sky_compositor_source'
 ADD_FOG_PLANES = True
 # Trailer nights, matched to Mojang's night key art: navy overhead, a teal
 # glow along the treeline, a cool-white moon strong enough to light faces,
@@ -1238,13 +1240,85 @@ def update_fog(scene):
         tree['mc_volume_version'] = 2
 
 
+def strip_sky(tree):
+    """Take every Sky & Lighting node, of any scene's sky, out of ``tree``,
+    joining the image that fed them to what they fed."""
+    removed = {node.name for node in tree.nodes if node.get(TAG)}
+    if not removed:
+        return
+    # Where the user's image enters the sky: its glow, or one entry all share.
+    entries = {}
+    for link in tree.links:
+        if link.to_node.name in removed and link.from_node.name not in removed and link.to_socket.name == 'Image':
+            entries.setdefault(link.to_node.name, link.from_socket)
+    entry = entries.get('MC Sky glow')
+    if entry is None and entries and all(socket == next(iter(entries.values())) for socket in entries.values()):
+        entry = next(iter(entries.values()))
+
+    def upstream(node):
+        seen = set()
+        while node.name in removed:
+            if node.name in seen:
+                return None
+            seen.add(node.name)
+            port = node.inputs.get('Image')
+            if port is None or not port.is_linked:
+                port = next((p for p in node.inputs if p.type == 'RGBA' and p.is_linked), None)
+            if port is None or not port.links:
+                return None
+            node, socket = port.links[0].from_node, port.links[0].from_socket
+        return socket
+
+    for from_node, to_socket in [(link.from_node, link.to_socket) for link in tree.links
+                                 if link.from_node.name in removed and link.to_node.name not in removed]:
+        if to_socket.type != 'RGBA':
+            continue  # a pass the sky provided: nothing of the user's to put there
+        source = entry if entry is not None else upstream(from_node)
+        if source is not None:
+            tree.links.new(source, to_socket)
+    if tree.animation_data:
+        prefixes = tuple(tree.nodes[name].path_from_id() for name in removed)
+        for curve in [c for c in tree.animation_data.drivers if c.data_path.startswith(prefixes)]:
+            tree.animation_data.drivers.remove(curve)
+    for name in removed:
+        tree.nodes.remove(tree.nodes[name])
+
+
+def user_compositor(tree):
+    """The compositor a scene had before any sky, from the scene's current one.
+
+    A sky's compositor names the tree it was copied from. One that does not
+    (an older Sparkle made it, or it was another scene's) is never built on:
+    its drivers and render layers read that other sky's scene, and a second
+    chain on top of the first grades the image twice (the purple render).
+    Its sky is taken out of a copy instead."""
+    seen = set()
+    while tree is not None and tree.get(TAG) and tree.as_pointer() not in seen:
+        seen.add(tree.as_pointer())
+        source = tree.get(COMPOSITOR_SOURCE)
+        if not isinstance(source, bpy.types.NodeTree):
+            break
+        tree = source
+    if tree is not None and (tree.get(TAG) or any(node.get(TAG) for node in tree.nodes)):
+        clean = tree.copy()
+        for key in (TAG, COMPOSITOR_SOURCE):
+            if key in clean:
+                del clean[key]
+        strip_sky(clean)
+        tree = clean
+    return tree
+
+
 def setup_compositor(scene):
     s = scene.mcbedrock_sky
     s.previous_use_nodes = scene.use_nodes
     if hasattr(scene, 'compositing_node_group'):
-        s.previous_compositor = scene.compositing_node_group
-        t = scene.compositing_node_group.copy() if scene.compositing_node_group else bpy.data.node_groups.new('MC Sky glow', 'CompositorNodeTree')
+        base = user_compositor(scene.compositing_node_group)
+        s.previous_compositor = base
+        t = base.copy() if base else bpy.data.node_groups.new('MC Sky glow', 'CompositorNodeTree')
         t[TAG] = s.owner
+        if base is not None:
+            t[COMPOSITOR_SOURCE] = base
         s.compositor = t
         scene.compositing_node_group = t
         outputs = [n for n in t.nodes if n.type == 'GROUP_OUTPUT']
@@ -1423,7 +1497,17 @@ def set_sky_value(target, name, value):
 _MISSING_KEY = re.compile(r'key "(.*)" not found')
 
 
+def follow_compositor(scene):
+    """Keep driving the scene's compositor when it was replaced by a duplicate
+    of the sky's own (Blender's duplicate button in the compositor header)."""
+    s = scene.mcbedrock_sky
+    current = getattr(scene, 'compositing_node_group', None)
+    if s.active and current is not None and current != s.compositor and s.owner and current.get(TAG) == s.owner:
+        s.compositor = current
+
+
 def update(scene, geometry=False):
+    follow_compositor(scene)
     try:
         _update(scene, geometry)
     except KeyError as error:
@@ -1984,7 +2068,7 @@ def apply(scene, preset):
     shared = s.active and any(sc != scene and sc.mcbedrock_sky.active and sc.mcbedrock_sky.owner==s.owner for sc in bpy.data.scenes)
     if shared:
         restore(scene)
-    if s.active and (not s.world or not s.collection):
+    if s.active and (not s.world or not s.collection or not s.compositor):
         restore(scene)
     if s.cycle_enabled:
         toggle_cycle(scene)
@@ -2235,8 +2319,11 @@ def restore(scene):
                 entry.object.hide_render, entry.object.hide_viewport = entry.render, entry.viewport
     s.lights.clear()
     if hasattr(scene,'compositing_node_group'):
-        if scene.compositing_node_group == s.compositor:
-            scene.compositing_node_group = s.previous_compositor
+        current = scene.compositing_node_group
+        # A duplicate of the sky's compositor is the sky's too: Remove puts the
+        # scene's own compositor back either way.
+        if current is not None and (current == s.compositor or current.get(TAG)):
+            scene.compositing_node_group = user_compositor(s.previous_compositor)
     elif s.compositor:
         t = s.compositor
         for n in list(t.nodes):
@@ -2399,6 +2486,7 @@ def frame_update(scene, *args):
         return
     if hasattr(scene,'mcbedrock_sky'):
         s=scene.mcbedrock_sky
+        follow_compositor(scene)
         tone=s.compositor.nodes.get('MC Film response') if s.compositor else None
         old_grade=s.compositor and (tone is None or tone.get('mc_grade_version',0)<2)
         old_world=s.world and (s.world.get('mc_sky_shader_version',0)!=SKY_SHADER_VERSION or 'Ambient light color' not in s.world.node_tree.nodes)

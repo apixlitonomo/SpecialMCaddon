@@ -134,6 +134,12 @@ def release_resources():
     _BROKEN.clear()
 
 
+def forget_images():
+    """Cached image files were deleted (Clear Cache): load them from disk again."""
+    _IMAGES.clear()
+    _BROKEN.clear()
+
+
 def _load_texture(path):
     """A GPU texture for an image file, and its size.
 

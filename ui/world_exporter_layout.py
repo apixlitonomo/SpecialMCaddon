@@ -49,6 +49,7 @@ SUBHEADER=32
 INDENT=18
 PACK_CARD=60
 PACK_SEARCH=36
+PACK_RELOAD=32   # Reload with new packs, under the search while the stack changed
 # Active / Inactive headings over the pack cards, as in the RP Manager.
 PACK_GROUP=30
 PACKS_VISIBLE=3
@@ -176,7 +177,7 @@ def pack_entries(scene,query='',state=None):
     discovered=scene.mcbedrock_discovered_packs
     query=query.strip()
     signature=(tuple(p.source_path or p.path for p in active),len(discovered),
-               scene.get('_mcbedrock_pack_scan_revision',0),query)
+               scene.get('_mcbedrock_pack_scan_revision',0),query,packs.favorites_revision())
     cached=getattr(state,'pack_entry_cache',None) if state is not None else None
     if cached and cached[0]==signature:return cached[1]
     library={packs._normalized_path(p.path):i for i,p in enumerate(discovered)}
@@ -185,7 +186,8 @@ def pack_entries(scene,query='',state=None):
         key=packs._normalized_path(p.source_path or p.path)
         seen.add(key)
         if packs._pack_matches_search(p,query):entries.append((key,i,library.get(key,-1)))
-    for i,p in enumerate(discovered):
+    # The stack keeps its priority order; favourites lead the rest of the library.
+    for i,p in packs.favorites_first(list(enumerate(discovered))):
         key=packs._normalized_path(p.path)
         if key in seen:continue
         seen.add(key)
@@ -576,7 +578,8 @@ def pack_block(state,scene,limit):
     groups=max(1,sum(row[0]=='group' for row in rows))
     visible=groups*(PACK_GROUP+GUTTER)+PACKS_VISIBLE*(PACK_CARD+GUTTER)-GUTTER if wanted is None else wanted
     listed=max(min(natural,smallest),min(natural,visible,limit))
-    return HEADER+GUTTER+PACK_SEARCH+GUTTER+listed,listed,natural,entries
+    reload=PACK_RELOAD+GUTTER if getattr(state,'packs_changed',False) else 0
+    return HEADER+GUTTER+PACK_SEARCH+GUTTER+reload+listed,listed,natural,entries
 
 
 def pack_caret_visible(state,now=None):
@@ -631,6 +634,10 @@ def draw_pack_card(paint,state,rect,key,item,active):
     switch=Rect(rect.right-12-36,rect.y+(rect.height-20)/2,36,20)
     x=thumb.right+12
     room=max(0,switch.x-12-x)
+    from .pack_manager import is_favorite
+    if is_favorite(item.path) and room>40:
+        paint.icon(Rect(switch.x-24,rect.y,12,rect.height),'star-fill',T.accent_hover,12)
+        room-=18
     edition_tag(r,x,rect.top-29,_edition_label(item.kind),room)
     name=item.name or Path(item.path).name
     r.text(Rect(x,rect.top-50,room,16),fit_text(r,name,room,13,'SemiBold'),T.text,size=13,weight='SemiBold')
@@ -656,6 +663,12 @@ def draw_packs(paint,settings,state,box,scene,listed,natural,entries):
     try:
         search=Rect(box.x,header.y-GUTTER-PACK_SEARCH,box.width,PACK_SEARCH)
         draw_pack_search(paint,state,search)
+        if getattr(state,'packs_changed',False):
+            # The map still shows the packs it was loaded with: one reload takes every change.
+            reload=Rect(box.x,search.y-GUTTER-PACK_RELOAD,box.width,PACK_RELOAD)
+            paint.button(reload,'Reload with new packs',('reload',),icon='refresh')
+            paint.tip(reload,'The map and 3D view still show the packs they were loaded with')
+            search=reload
         area=Rect(box.x,search.y-GUTTER-listed,box.width,listed)
         visible=area.intersect(body)
         if visible.height<=0:return
@@ -913,6 +926,7 @@ def draw_inspector(paint,settings,state,box,context):
     footer=footer_state(settings,state,column.width,busy,reason,scene)[4]
     # The pack list keeps room for a few section headers below it.
     room=column.height-footer-GUTTER-17-HEADER-GUTTER-PACK_SEARCH-GUTTER-4*HEADER
+    if getattr(state,'packs_changed',False):room-=PACK_RELOAD+GUTTER
     total,listed,natural,entries=pack_block(state,scene,room)
     shown=reveal(state,'packs','packs' in state.sections)
     pinned_height=HEADER+(total-HEADER)*shown

@@ -295,6 +295,7 @@ def prepare(scene):
             s.materials.remove(index)
     cache={(entry.original,bool(entry.prepared.get(edge_details.CORNER))):entry.prepared
            for entry in s.materials if entry.original and entry.prepared}
+    fresh=set()
     for obj in scene_meshes(scene):
         # Object overrides preserve mesh sharing; linked/shared objects cannot be changed safely.
         if obj.library or obj.override_library or obj in shared:
@@ -352,6 +353,7 @@ def prepare(scene):
                 light_blocks.prepare_material(scene,prepared,original)
                 lighting_pipeline.prepare_material(scene,prepared)
                 cache[cache_key]=prepared
+                fresh.add(prepared)
             entry=s.materials.add()
             entry.object=obj
             entry.index=index
@@ -366,7 +368,8 @@ def prepare(scene):
     s.finish_active=bool(s.materials)
     s.finish_status=f'{len(cache)} materials prepared'
     s.finish_skipped=skipped
-    for material in {entry.prepared for entry in s.materials if entry.prepared}:
+    # Upgrade saved copies; the ones made above were prepared a moment ago.
+    for material in {entry.prepared for entry in s.materials if entry.prepared}-fresh:
         lighting_pipeline.prepare_material(scene,material)
     # Last, so the lines wrap the finished, compensated surface color.
     outlines.prepare(scene)
@@ -375,6 +378,7 @@ def prepare(scene):
     if unsupported:s.finish_status+=f'; {unsupported} complex materials keep their original colour pipeline'
     update(scene)
     lighting_pipeline.update(scene)
+    lighting_pipeline.materials_current(scene)
 
 
 def update(scene):

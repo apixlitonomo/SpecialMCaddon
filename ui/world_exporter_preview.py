@@ -12,7 +12,7 @@ import json
 import math
 import time
 from .gpu_framework import Rect
-from .gpu_framework.motion import tween
+from .gpu_framework.motion import tween, blend
 from ..exporters.miex.preview import (area_chunks, chunk_rows, plan, row_key, surface_floor,
                                       BATCH_FACES, FACES, MAX_BATCH, MAX_CHUNKS)
 
@@ -469,7 +469,8 @@ def draw_switch(paint, s):
         command = ('view',view)
         active = i == selected
         enabled = (view == 'flat' or s.has_selection or s.preview.on) and not action_locked(s,command)
-        ink = (1,1,1,1) if active else T.text_muted if enabled else T.text_muted[:3]+(.6,)
+        lift = 0. if active else paint.wash(cell.inset((2,2,2,2)),command,enabled)
+        ink = (1,1,1,1) if active else blend(T.text_muted,T.text,lift) if enabled else T.text_muted[:3]+(.6,)
         r.text(cell,label,ink,size=11.5,weight='SemiBold' if active else 'Medium',align='CENTER')
         if paint.focused(command):r.rect(cell.inset((2,2,2,2)),(0,0,0,0),radius=CONTROL_RADIUS,border=T.text,border_width=1.5)
         if enabled:paint.target(cell,command)

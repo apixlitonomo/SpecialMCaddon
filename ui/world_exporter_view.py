@@ -5,7 +5,7 @@ from .gpu_framework import Rect
 from .world_exporter_layout import (geometry, draw_inspector, sweep, text_width, fit_text, edition_tag, wrap, friendly,
                                     T, PAD, GUTTER, PANEL, EDGE)
 from .world_exporter_canvas import ICONS
-from .gpu_framework.motion import tween, make_ease
+from .gpu_framework.motion import tween, make_ease, blend
 from ..exporters.miex.worlds import dimension_key
 
 # The three vanilla dimensions get tabs, in the game's order.
@@ -236,6 +236,7 @@ def draw_topbar(paint, s, settings, bar, column):
     x = round(bar.x+max(12,(bar.width-total)/2))
     mid = bar.y+bar.height/2
     world_rect = Rect(x,mid-20,picker,40)
+    paint.wash(world_rect,('menu','worlds'),radius=6)
     icon = Rect(x+6,mid-14,28,28)
     if not (world.get('icon_path') and r.image(icon,world['icon_path'],radius=3,cover=True)):
         r.rect(icon,T.surface_raised,radius=3)
@@ -272,12 +273,14 @@ def draw_dimension_tabs(paint, s, settings, rect, tabs, more, segment):
         cell = Rect(rect.x+i*segment,rect.y,segment,rect.height)
         cmd = ('dimension',name)
         active = i == selected
+        lift = 0. if active else paint.wash(cell.inset((2,2,2,2)),cmd,radius=3)
         r.text(cell.inset((6,0,6,0)),fit_text(r,label,segment-12,11.5,'SemiBold' if active else 'Medium'),
-               (1,1,1,1) if active else T.text_muted,size=11.5,weight='SemiBold' if active else 'Medium',align='CENTER')
+               (1,1,1,1) if active else blend(T.text_muted,T.text,lift),size=11.5,weight='SemiBold' if active else 'Medium',align='CENTER')
         if paint.focused(cmd):r.rect(cell.inset((2,2,2,2)),(0,0,0,0),radius=3,border=T.text,border_width=1.5)
         paint.target(cell,cmd);paint.tip(cell,'Show '+label)
     if more:
         cell = Rect(rect.x+len(tabs)*segment,rect.y,32,rect.height)
+        paint.wash(cell.inset((2,2,2,2)),('menu','dimensions'),radius=3)
         paint.icon(cell,'chevron',T.text_muted,10,rotation=180*paint.ease('dimensions.arrow',s.menu=='dimensions',.2))
         paint.ring(cell,('menu','dimensions'))
         paint.target(cell,('menu','dimensions'));paint.tip(cell,'More dimensions')

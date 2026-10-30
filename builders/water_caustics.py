@@ -5,7 +5,6 @@ Imported geometry/materials stay untouched. Reapply after moving shorelines.
 This is an authored-texture projection, not Bedrock's deferred caustics pass.
 """
 import math
-import time
 from pathlib import Path
 
 import bpy
@@ -21,7 +20,6 @@ MAX_WATER_FACES = 250_000
 MAX_RAY_STEPS = 24
 MAX_CANDIDATES = 300_000
 MAX_PATCHES = 80_000
-MAX_SECONDS = 20.
 DOWN = Vector((0, 0, -1))
 
 
@@ -255,6 +253,15 @@ def rebuild(scene, collection, *, water_objects=None):
     # Water/sky application may just have replaced material slots. Resolve
     # those edits before reading evaluated hit topology and material slots.
     depsgraph.update()
+    from .column_rays import ColumnRays, cells, grid_shift
+    # Sample each block's centre and corners on the world's own block grid.
+    sx, sy = grid_shift([(box[0], box[2]) for box in bounds], cell)
+    levels = {}
+    for bx0, bx1, by0, by1, level in bounds:
+        for x in cells(bx0, bx1, cell, sx):
+            for y in cells(by0, by1, cell, sy):
+                levels[x, y] = min(level, levels.get((x, y), level))
+    rays = ColumnRays(scene, depsgraph, levels, cell, MAX_DEPTH * block + 2 * block, shift=(sx, sy))
     evaluated, opaque_slots = {}, {}
     blocked = object()
 
@@ -263,7 +270,7 @@ def rebuild(scene, collection, *, water_objects=None):
         start = origin.copy()
         remaining = distance
         for _ in range(MAX_RAY_STEPS):
-            found, location, normal, index, obj, _matrix = scene.ray_cast(
+            found, location, normal, index, obj, _matrix = rays.ray_cast(
                 depsgraph, start, direction, distance=remaining)
             if not found:
                 return None
@@ -293,15 +300,12 @@ def rebuild(scene, collection, *, water_objects=None):
 
     candidates, patches = set(), {}
     stop = False
-    deadline = time.perf_counter() + MAX_SECONDS
     # Prefer exposed lakes before deep pools when a large export reaches its
-    # explicit work budget. The same geometry always has the same priority.
+    # work budget. That budget counts work, never time: the same geometry
+    # always bakes the same caustics, on fast and slow computers alike.
     for bx0, bx1, by0, by1, level in sorted(bounds, key=lambda box: -box[4]):
-        for x in range(math.floor(bx0 / cell), math.ceil(bx1 / cell)):
-            for y in range(math.floor(by0 / cell), math.ceil(by1 / cell)):
-                if time.perf_counter() >= deadline:
-                    truncated, reason, stop = True, 'Projection time limit', True
-                    break
+        for x in cells(bx0, bx1, cell, sx):
+            for y in cells(by0, by1, cell, sy):
                 key = (round(level / block, 4), x, y)
                 if key in candidates:
                     continue
@@ -309,7 +313,7 @@ def rebuild(scene, collection, *, water_objects=None):
                     truncated, reason, stop = True, 'Projection sample limit', True
                     break
                 candidates.add(key)
-                center = Vector(((x + .5) * cell, (y + .5) * cell, level - epsilon))
+                center = Vector(((x + sx + .5) * cell, (y + sy + .5) * cell, level - epsilon))
                 # Conservative vertical sky access prevents daytime emission
                 # in roofed pools. This is not angular sun-shadow tracing.
                 above = Vector((center.x, center.y, level + epsilon))
@@ -323,7 +327,7 @@ def rebuild(scene, collection, *, water_objects=None):
                     continue
                 corners = []
                 for dx, dy in ((.001, .001), (.999, .001), (.999, .999), (.001, .999)):
-                    p = Vector(((x + dx) * cell, (y + dy) * cell, level + .05 * block))
+                    p = Vector(((x + sx + dx) * cell, (y + sy + dy) * cell, level + .05 * block))
                     wet = water.ray_cast(p, DOWN, .1 * block)[0]
                     if wet is None or abs(wet.z - level) > .025 * block:
                         break

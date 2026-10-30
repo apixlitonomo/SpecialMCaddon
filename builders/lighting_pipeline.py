@@ -275,12 +275,28 @@ def aov_coverage(scene,material):
                 set_value(weight,'default_value',float(alpha.default_value))
 
 
+def drop_unlit_emission(material):
+    """Copies saved before unlit surfaces skipped it still correct a fixed
+    emission colour at zero strength; it adds nothing, so remove it."""
+    t=material.node_tree
+    comp=t.nodes.get('MC compensate Emission Color')
+    shaders=[n for n in t.nodes if n.type=='BSDF_PRINCIPLED']
+    if comp is None or comp.inputs['Color'].is_linked or len(shaders)!=1:return
+    strength=shaders[0].inputs['Emission Strength']
+    if strength.is_linked or strength.default_value!=0:return
+    color=tuple(comp.inputs['Color'].default_value)
+    targets=[link.to_socket for link in comp.outputs[0].links]
+    t.nodes.remove(comp)
+    for target in targets:target.default_value=color
+
+
 def prepare_material(scene,material):
     fog_material(scene,material)
     edge_details.prepare_material(scene, material)
     # Upgrade already-prepared saved materials without wrapping them twice.
     bound_diffuse_compensation(scene,material)
     if material.get('mc_lighting_version')==VERSION:
+        drop_unlit_emission(material)
         aov_coverage(scene,material)
         return
     t=material.node_tree;g=Graph(t)
@@ -292,14 +308,17 @@ def prepare_material(scene,material):
     # Auxiliary passes are unavailable for EEVEE's Blended surfaces. This is a
     # scene-owned copy; restoring Lighting restores the user's original method.
     if hasattr(material,'surface_render_method'):material.surface_render_method='DITHERED'
-    for name in ('Base Color','Emission Color') if shader.type=='BSDF_PRINCIPLED' else ('Color',):
+    color=shader.inputs['Emission Color' if shader.type=='BSDF_PRINCIPLED' else 'Color']
+    strength=shader.inputs['Emission Strength' if shader.type=='BSDF_PRINCIPLED' else 'Strength']
+    # A surface with a fixed zero strength emits nothing whatever its colour:
+    # correcting that colour only made every block's shader slower to compile.
+    unlit=shader.type=='BSDF_PRINCIPLED' and not color.is_linked and not strength.is_linked and strength.default_value==0
+    for name in ('Base Color',) if unlit else ('Base Color','Emission Color') if shader.type=='BSDF_PRINCIPLED' else ('Color',):
         port=shader.inputs[name]
         comp=t.nodes.new('ShaderNodeGroup');comp.node_tree=compensation(scene);comp.name='MC compensate '+name
         insert_color(t,port,comp)
     bound_diffuse_compensation(scene,material)
-    color=shader.inputs['Emission Color' if shader.type=='BSDF_PRINCIPLED' else 'Color']
-    strength=shader.inputs['Emission Strength' if shader.type=='BSDF_PRINCIPLED' else 'Strength']
-    rgb=g.split(color.links[0].from_socket)
+    rgb=list(color.default_value[:3]) if unlit else g.split(color.links[0].from_socket)
     strength_value=strength.links[0].from_socket if strength.links else strength.default_value
     emission=g.combine([g.op('MULTIPLY',c,strength_value) for c in rgb])
     aov=t.nodes.new('ShaderNodeOutputAOV');aov.aov_name=pass_name(scene,'Emission');t.links.new(emission,aov.inputs['Color'])
@@ -796,6 +815,20 @@ def _report_once(what):
         print(f'Sparkle: {what} hit an error and keeps running:\n{message}')
 
 
+def _slot_signature(scene):
+    from . import sky_materials
+    return tuple((obj.as_pointer(),tuple(slot.material.as_pointer() if slot.material else 0 for slot in obj.material_slots)) for obj in sky_materials.scene_meshes(scene))
+
+
+def materials_current(scene):
+    """sky_materials.prepare() just matched every slot: the sync timer need
+    not prepare the same scene again a second later."""
+    key=scene.as_pointer()
+    _signatures[key]=_slot_signature(scene)
+    _material_counts[key]=(len(bpy.data.objects),len(bpy.data.materials))
+    _material_dirty.discard(key)
+
+
 def sync_materials():
     """Main-thread timer: update newly imported/assigned materials without importer hooks."""
     try:
@@ -824,12 +857,12 @@ def _sync_materials():
             continue
         _material_dirty.discard(key)
         _material_counts[key]=counts
-        signature=tuple((obj.as_pointer(),tuple(slot.material.as_pointer() if slot.material else 0 for slot in obj.material_slots)) for obj in sky_materials.scene_meshes(scene))
+        signature=_slot_signature(scene)
         if _signatures.get(key)==signature:continue
         sky.BUSY.add(key)
         try:
             sky_materials.prepare(scene);setup(scene)
-            _signatures[key]=tuple((obj.as_pointer(),tuple(slot.material.as_pointer() if slot.material else 0 for slot in obj.material_slots)) for obj in sky_materials.scene_meshes(scene))
+            _signatures[key]=_slot_signature(scene)
         except Exception as exc:
             s.finish_status='Lighting setup needs attention: '+str(exc)
             _signatures[key]=signature

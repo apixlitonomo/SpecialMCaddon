@@ -418,13 +418,18 @@ def _cache_for(scene):
     """ThumbnailCache bound to the scene's current thumbnail quality."""
     from ..importers.browser_thumbnail_cache import BrowserThumbnailCache
     from ..importers.brarchive_pack import selections
+    from ..importers.bedrock_assets import layered_browser_roots
+    # A browsed pack that is switched on shows the packs stacked with it; a
+    # change elsewhere in the stack that resolves nothing keeps every thumbnail.
+    root = bpy.path.abspath(scene.mcbedrock_browser_root) if scene.mcbedrock_browser_root else ''
+    roots = layered_browser_roots(scene, root, bpy.path.abspath)
     key = (scene.as_pointer(), _thumb_size(scene),
            getattr(scene, 'mcbedrock_browser_root', ''),
            getattr(scene, 'mcbedrock_vanilla_assets_path', ''),
-           scene.get('mcbedrock_pack_experiences', ''))
+           scene.get('mcbedrock_pack_experiences', ''),
+           tuple(roots))
     cache = _scene_thumbnail_caches.get(key)
     if cache is None:
-        roots = [bpy.path.abspath(scene.mcbedrock_browser_root)] if scene.mcbedrock_browser_root else []
         cache = BrowserThumbnailCache(size=_thumb_size(scene),
             resource_roots=roots, choices=selections(scene),
             vanilla_path=bpy.path.abspath(scene.mcbedrock_vanilla_assets_path or ''))
