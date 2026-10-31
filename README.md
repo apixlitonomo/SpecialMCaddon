@@ -150,7 +150,7 @@ Primary UI: **View3D → Sidebar → Sparkle** (custom GPU-styled interface, wit
 
 ---
 
-## Project Structure (high level)
+## Project Structure
 
 | Path | Role |
 |------|------|
