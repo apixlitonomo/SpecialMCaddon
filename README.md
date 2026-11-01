@@ -5,7 +5,7 @@
 
 # Sparkle
 
-**A Minecraft Blender suite** — import models, particles, schematics, and full worlds; manage resource packs; simulate Bedrock/Java particles with Molang; and export back to Blockbench and Bedrock formats.
+**A Minecraft Blender suite**  import models, particles, schematics, and full worlds; manage resource packs; simulate Bedrock/Java particles with Molang; and export back to Blockbench and Bedrock formats.
 
 **Addon name (in Blender):** Sparkle  
 **Version:** 1.3.1  
