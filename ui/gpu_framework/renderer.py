@@ -78,25 +78,27 @@ def _ui_shader(kind):
         interface.smooth('VEC2','local')
         info.vertex_out(interface)
         info.sampler(0,'FLOAT_2D','image')
-        for name in ['bounds', 'uvRect', 'iconTint']:
+        # shape = (corner radius, rotation, opacity, flags: 1 linear output,
+        # 2 nearest sampling). Five separate scalars went past Vulkan's 128-byte
+        # push-constant minimum and Blender printed a warning for each.
+        for name in ['bounds', 'uvRect', 'iconTint', 'shape']:
             info.push_constant('VEC4', name)
-        info.push_constant('FLOAT','cornerRadius')
-        info.push_constant('FLOAT','rotation')
-        info.push_constant('FLOAT','opacity')
-        info.push_constant('BOOL','linearOutput')
-        info.push_constant('BOOL','nearestSampling')
         info.vertex_source('''
             void main() {
                 local = pos * bounds.zw;
                 uv = mix(uvRect.xy, uvRect.zw, pos);
                 vec2 offset = local - bounds.zw * 0.5;
-                float c = cos(rotation), s = sin(rotation);
+                float c = cos(shape.y), s = sin(shape.y);
                 vec2 turned = vec2(offset.x * c - offset.y * s, offset.x * s + offset.y * c);
                 gl_Position = ModelViewProjectionMatrix * vec4(bounds.xy + bounds.zw * 0.5 + turned, 0.0, 1.0);
             }
         ''')
         info.fragment_source('''
             void main() {
+                float cornerRadius = shape.x;
+                float opacity = shape.z;
+                bool linearOutput = mod(shape.w, 2.0) >= 1.0;
+                bool nearestSampling = shape.w >= 2.0;
                 ivec2 dimensions = textureSize(image, 0);
                 ivec2 pixel = clamp(ivec2(floor(uv * vec2(dimensions))), ivec2(0), dimensions - ivec2(1));
                 vec4 color = nearestSampling ? texelFetch(image, pixel, 0) : texture(image, uv);
@@ -452,11 +454,9 @@ class BlenderRenderer:
             self._image_shader.uniform_float('ModelViewProjectionMatrix', self._matrix)
             self._image_shader.uniform_float('bounds', (rect.x, rect.y, rect.width, rect.height))
             self._image_shader.uniform_float('uvRect', tuple(uv_rect))
-            self._image_shader.uniform_float('cornerRadius', corner if corner > .5 else 0.0)
-            self._image_shader.uniform_float('rotation', math.radians(round(rotation, 1) % 360))
-            self._image_shader.uniform_float('opacity',self.opacity)
-            self._image_shader.uniform_bool('linearOutput',self.linear_output)
-            self._image_shader.uniform_bool('nearestSampling',nearest)
+            flags = (1.0 if self.linear_output else 0.0) + (2.0 if nearest else 0.0)
+            self._image_shader.uniform_float('shape', (corner if corner > .5 else 0.0,
+                math.radians(round(rotation, 1) % 360), self.opacity, flags))
             icons = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../assets/ui/icons'))
             if tint is None:
                 tint = getattr(self, 'icon_tint', None) if os.path.dirname(path) == icons and os.path.basename(path) not in {'java.png','bedrock.png'} else None

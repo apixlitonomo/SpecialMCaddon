@@ -36,7 +36,7 @@ class MCBEDROCK_OT_ui_edit_property(bpy.types.Operator):
 
     def invoke(self, context, event):
         owner = _target(self.collection, self.pointer)
-        if owner is None or not self.property_name.startswith("mcbedrock_") or not hasattr(owner, self.property_name):
+        if not self.property_name.startswith("mcbedrock_") or _resolve(owner, self.property_name)[0] is None:
             return {"CANCELLED"}
         self._owner = owner
         runtime._NATIVE_DIALOG_OPEN = True
@@ -53,11 +53,11 @@ class MCBEDROCK_OT_ui_edit_property(bpy.types.Operator):
         return _target(self.collection, self.pointer)
 
     def draw(self, context):
-        owner = self._live_owner()
-        if owner is not None and hasattr(owner, self.property_name):
+        owner, name = _resolve(self._live_owner(), self.property_name)
+        if owner is not None:
             self.layout.use_property_split = True
             self.layout.use_property_decorate = True
-            self.layout.prop(owner, self.property_name)
+            self.layout.prop(owner, name)
 
     def execute(self, context):
         runtime._NATIVE_DIALOG_OPEN = False
@@ -67,13 +67,30 @@ class MCBEDROCK_OT_ui_edit_property(bpy.types.Operator):
         runtime._NATIVE_DIALOG_OPEN = False
 
 
+def _resolve(datablock, path):
+    """The struct and property name ``path`` names under ``datablock``, or (None, None)."""
+    if datablock is None:
+        return None, None
+    parent, _, name = path.rpartition(".")
+    try:
+        owner = datablock.path_resolve(parent) if parent else datablock
+    except ValueError:
+        return None, None
+    return (owner, name) if hasattr(owner, name) else (None, None)
+
+
 def edit_property(owner, name):
+    # Settings in a property group (Posterize's live on the window manager)
+    # are edited through their datablock and the path to them.
+    datablock = owner.id_data
     collection = next((collection for typ, collection in (
         (bpy.types.Scene, "scenes"), (bpy.types.Object, "objects"),
-        (bpy.types.Action, "actions")) if isinstance(owner, typ)), None)
+        (bpy.types.Action, "actions"), (bpy.types.WindowManager, "window_managers"))
+        if isinstance(datablock, typ)), None)
+    path = name if owner == datablock else f"{owner.path_from_id()}.{name}"
     if collection:
         bpy.ops.mcbedrock.ui_edit_property("INVOKE_DEFAULT", collection=collection,
-                                         pointer=str(owner.as_pointer()), property_name=name)
+                                         pointer=str(datablock.as_pointer()), property_name=path)
 
 
 class PropertyField(Button):

@@ -41,23 +41,31 @@ def _model_nodes(node, found):
             _model_nodes(value, found)
 
 
-def item_tint_index(roots):
+def item_tint_index(roots, overlays=False):
     """``model id -> tint source list`` from the ordered pack roots.
 
     The first root that defines an item wins, like the resource pack stack.
+    ``overlays`` also reads a pack's version overlay folders (where packs such
+    as Origin Realms keep 1.21.4+ item definitions), overlays first.
     """
-    key = tuple(os.path.normcase(os.path.abspath(str(root))) for root in roots if root)
+    key = (overlays,) + tuple(os.path.normcase(os.path.abspath(str(root))) for root in roots if root)
     cached = _INDEX_CACHE.get(key)
     if cached is not None:
         return cached
     index = {}
     seen_items = set()
+    folders = []
     for root in roots:
         if not root or not os.path.isdir(str(root)):
             continue
-        pattern = os.path.join(str(root), "assets", "*", "items", "**", "*.json")
+        if overlays:
+            folders.extend(sorted(os.path.join(str(root), name) for name in os.listdir(str(root))
+                                  if os.path.isdir(os.path.join(str(root), name, "assets")))[::-1])
+        folders.append(str(root))
+    for root in folders:
+        pattern = os.path.join(root, "assets", "*", "items", "**", "*.json")
         for path in glob.glob(pattern, recursive=True):
-            relative = os.path.relpath(path, str(root)).replace("\\", "/").lower()
+            relative = os.path.relpath(path, root).replace("\\", "/").lower()
             if relative in seen_items:
                 continue
             seen_items.add(relative)
@@ -122,3 +130,18 @@ def model_tint_colors(model_id, roots, grass_colormap=None):
     """Per-``tintindex`` default colours for one model (None where unknown)."""
     sources = item_tint_index(roots).get(normalize_model_id(model_id), ())
     return [tint_source_color(source, grass_colormap) for source in sources]
+
+
+# Tint sources whose colour the game or a server picks at runtime. A constant
+# is fixed by the pack itself (Origin Realms uses white for slot 0).
+_FIXED_SOURCES = {"constant"}
+
+
+def server_tinted_indices(model_id, roots):
+    """``tintindex`` values a server or the game colours at runtime, or None
+    when no item definition names this model (then every index counts)."""
+    sources = item_tint_index(roots, overlays=True).get(normalize_model_id(model_id))
+    if not sources:
+        return None
+    return {index for index, source in enumerate(sources)
+            if not (isinstance(source, dict) and str(source.get("type", "")).split(":")[-1] in _FIXED_SOURCES)}

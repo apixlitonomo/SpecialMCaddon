@@ -11,6 +11,8 @@ import bpy
 from mathutils import Matrix, Vector
 from mathutils.bvhtree import BVHTree
 
+from ..exporters.miex.world_scale import subtree_objects
+
 TAG = 'mcaddon_water_caustics'
 VERSION = 1
 CELL = 1.
@@ -29,7 +31,7 @@ def remove(collection):
         return 0
     allowed = {collection, *collection.children_recursive}
     removed, materials, images = 0, set(), set()
-    for obj in list(collection.all_objects):
+    for obj in subtree_objects(collection):
         if not obj.get(TAG):
             continue
         if any(c not in allowed for c in obj.users_collection):
@@ -209,7 +211,7 @@ def rebuild(scene, collection, *, water_objects=None):
     cell, epsilon = CELL * block, .001 * block
     water_vertices, water_faces, bounds, participating = [], [], [], []
     truncated, reason = False, ''
-    sources = list(water_objects) if water_objects is not None else list(collection.all_objects)
+    sources = list(water_objects) if water_objects is not None else subtree_objects(collection)
     for obj in sources:
         if obj.type != 'MESH' or obj.hide_render or obj.get(TAG):
             continue

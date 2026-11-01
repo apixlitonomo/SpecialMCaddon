@@ -2,6 +2,7 @@
 import bpy
 from .gpu_framework import Column, Label, Style, Toggle
 from .styled_pages import button, invoke
+from .live_color import SettingColor
 from .sky_page import SkyGroup, Segmented, Segment, SwatchButton, QuietButton, FIELD_LABEL, hint
 from .outlines_page import OutlineSlider
 from ..builders import flat_lighting
@@ -199,28 +200,13 @@ class MCBEDROCK_OT_flat_value_edit(bpy.types.Operator):
         return bpy.ops.mcbedrock.flat_value(name=self.name, value=self.value)
 
 
-class MCBEDROCK_OT_flat_color(bpy.types.Operator):
+class MCBEDROCK_OT_flat_color(SettingColor, bpy.types.Operator):
+    # The scene follows the picker while it moves (live_color.py).
     bl_idname = 'mcbedrock.flat_color'
     bl_label = 'Choose color'
     bl_options = {'UNDO'}
-    field: bpy.props.StringProperty()
-    color: bpy.props.FloatVectorProperty(subtype='COLOR', size=3, min=0, max=1)
-
-    def invoke(self, context, event):
-        if self.field not in COLOR_FIELDS:
-            return {'CANCELLED'}
-        self.color = getattr(context.scene.mcbedrock_flat, self.field)
-        return context.window_manager.invoke_props_dialog(self, width=280)
-
-    def draw(self, context):
-        self.layout.template_color_picker(self, 'color', value_slider=True)
-        self.layout.prop(self, 'color', text='')
-
-    def execute(self, context):
-        if self.field not in COLOR_FIELDS:
-            return {'CANCELLED'}
-        setattr(context.scene.mcbedrock_flat, self.field, self.color)
-        return {'FINISHED'}
+    settings = 'mcbedrock_flat'
+    fields = COLOR_FIELDS
 
 
 CLASSES = (MCBEDROCK_OT_flat_value, MCBEDROCK_OT_flat_value_edit, MCBEDROCK_OT_flat_color)

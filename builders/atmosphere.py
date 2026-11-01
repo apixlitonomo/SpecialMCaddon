@@ -126,28 +126,108 @@ def prepare_material(scene, material):
     # Preserve cutouts even when Cycles evaluates AOVs before transparency.
     # Multiple closures still get fog; native renderer coverage resolves them.
     if len(shaders) == 1:
+        from .lighting_pipeline import linked_from
         alpha = shaders[0].inputs['Alpha']
         target = node.inputs['Coverage']
-        if alpha.links:
-            source = alpha.links[0].from_socket
-            if not target.links or target.links[0].from_socket != source:tree.links.new(source, target)
+        source = linked_from(alpha)
+        if source is not None:
+            if linked_from(target) != source:tree.links.new(source, target)
         else:
-            for link in list(target.links):tree.links.remove(link)
+            if target.is_linked:
+                for link in list(target.links):tree.links.remove(link)
             set_value(target, 'default_value', alpha.default_value)
+
+
+LEGACY = ('MC Terrain fog', 'MC Sun on terrain')   # the fog stages before the atmosphere, in image order
+GRADE = 'MC Color balance'                          # the grade's last node: the stages start after it
+_HELPERS = {'CompositorNodeSeparateColor', 'ShaderNodeMath', 'CompositorNodeCombineColor'}
+
+
+def _take_out_legacy(tree, destination):
+    """Remove the serial legacy fog stages, joining what fed them to what they
+    fed, and return the input they handed the image to: the atmosphere takes
+    their place there. In looks saved before the atmosphere, Flat fog and the
+    film look (each set up later on the link into destination) sit between
+    them and destination; removing them without joining cut the image off,
+    and the render showed only Flat fog's color, one flat grey."""
+    from .lighting_pipeline import linked_from
+    stages = [node for node in map(tree.nodes.get, LEGACY) if node is not None]
+    names = {node.name for node in stages}
+    onward = [link.to_socket for node in stages for output in node.outputs for link in output.links
+              if link.to_node.name not in names]
+    for node in stages:
+        source = linked_from(node.inputs[6])
+        targets = [link.to_socket for output in node.outputs for link in output.links]
+        tree.nodes.remove(node)
+        if source is not None:
+            for target in targets:
+                tree.links.new(source, target)
+    return onward[0] if onward else destination
+
+
+def _image_input(node):
+    """The input that carries the image through a stage node."""
+    if node.bl_idname == 'ShaderNodeMix':
+        return node.inputs[6]
+    socket = node.inputs.get('Image')
+    if socket is not None:
+        return socket
+    return next((socket for socket in node.inputs if socket.is_linked), None)
+
+
+def repair(tree, destination):
+    """Join the image path again in looks upgraded by the earlier setup.
+
+    Its legacy fog stages were removed without joining the chain where Flat
+    fog and the film look sat after them, and the atmosphere went in after
+    those: the grade's output fed nothing and the render was one flat grey.
+    Following the image back from destination, past the atmosphere, to the
+    input nothing feeds: the grade goes into the atmosphere again and the
+    atmosphere's result into that input, so the stages run as a new setup
+    orders them (grade, atmosphere, Flat fog, film look). Returns whether
+    anything was joined."""
+    from .lighting_pipeline import linked_from
+    grade, mix = tree.nodes.get(GRADE), tree.nodes.get('MC Atmosphere')
+    stage_out = linked_from(destination)
+    if grade is None or mix is None or stage_out is None or grade.outputs[0].is_linked:
+        return False
+    socket, seen, passed, stage_in = destination, set(), False, None
+    while True:
+        source = linked_from(socket)
+        if source is None:
+            break                                   # the cut: nothing feeds this image input
+        node = source.node
+        if node == grade or node.name in seen:
+            return False
+        seen.add(node.name)
+        if passed and stage_in is None and node.bl_idname not in _HELPERS:
+            stage_in = source                       # what fed the atmosphere's own nodes
+        passed = passed or node == mix
+        socket = _image_input(node)
+        if socket is None:
+            return False
+    if stage_in is None:
+        return False
+    consumers = [link.to_socket for link in stage_in.links]      # the atmosphere's inputs
+    tree.links.new(stage_in, destination)
+    for target in consumers:
+        tree.links.new(grade.outputs[0], target)
+    tree.links.new(stage_out, socket)
+    return True
 
 
 def setup(scene, tree, render, destination):
     from .lighting_pipeline import Graph, TAG, pass_name
-    if tree.nodes.get('MC Atmosphere'): return
+    if tree.nodes.get('MC Atmosphere'):
+        repair(tree, destination)
+        return
     # Remove serial legacy fog stages from the image path when the user opts
-    # into the updated look. Old saved looks keep their old graph until then.
+    # into the updated look; the atmosphere takes their place, before Flat
+    # fog and the film look. Old saved looks keep their old graph until then.
+    destination = _take_out_legacy(tree, destination)
+    if not destination.is_linked:
+        return
     source = destination.links[0].from_socket
-    while source.node.name in {'MC Terrain fog', 'MC Sun on terrain'}:
-        source = source.node.inputs[6].links[0].from_socket
-    tree.links.new(source, destination)
-    for name in ('MC Terrain fog', 'MC Sun on terrain'):
-        node = tree.nodes.get(name)
-        if node: tree.nodes.remove(node)
     g = Graph(tree)
     weight, direction, coverage = g.split(render.outputs[pass_name(scene, 'Atmosphere')])
     direction = g.op('DIVIDE', direction, g.op('MAXIMUM', coverage, 1e-6))

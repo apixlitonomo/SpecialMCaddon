@@ -18,6 +18,14 @@ Its original license and notices are retained in `assets/miex/jre/legal` and
 `assets/miex/jre/NOTICE`. See `assets/miex/RUNTIME_NOTICES.md` for upstream
 release and corresponding source links. No system Java installation is changed.
 
+The Bedrock compatibility tables in `exporters/miex/bedrock_compat` (made by
+`tools/build_bedrock_compat.py`) build on MiEx's own Bedrock translation tables.
+Which block states Bedrock 26.60 stores was read from PrismarineJS minecraft-data
+(https://github.com/PrismarineJS/minecraft-data, MIT License), and the Bedrock
+biome ids and the stair corner names from GeyserMC's mappings
+(https://github.com/GeyserMC/mappings, MIT License, Copyright (c) 2019-2026 GeyserMC).
+No files from either project are included; only the derived tables are.
+
 The legacy schematic importer bundles WorldEdit's numeric block mappings from
 EngineHub/WorldEdit, distributed under GPL-3.0-or-later. The unmodified mapping,
 source revision and complete license are in `data/worldedit-legacy.json`,

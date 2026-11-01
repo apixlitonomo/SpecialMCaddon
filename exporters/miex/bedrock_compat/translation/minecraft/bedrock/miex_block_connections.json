@@ -1,0 +1,516 @@
+[
+ {
+  "mappings": {
+   "black_stained_glass_pane,blue_stained_glass_pane,brown_stained_glass_pane,copper_bars,cyan_stained_glass_pane,exposed_copper_bars,glass_pane,gray_stained_glass_pane,green_stained_glass_pane,hard_black_stained_glass_pane,hard_blue_stained_glass_pane,hard_brown_stained_glass_pane,hard_cyan_stained_glass_pane,hard_glass_pane,hard_gray_stained_glass_pane,hard_green_stained_glass_pane,hard_light_blue_stained_glass_pane,hard_light_gray_stained_glass_pane,hard_lime_stained_glass_pane,hard_magenta_stained_glass_pane,hard_orange_stained_glass_pane,hard_pink_stained_glass_pane,hard_purple_stained_glass_pane,hard_red_stained_glass_pane,hard_white_stained_glass_pane,hard_yellow_stained_glass_pane,iron_bars,light_blue_stained_glass_pane,light_gray_stained_glass_pane,lime_stained_glass_pane,magenta_stained_glass_pane,orange_stained_glass_pane,oxidized_copper_bars,pink_stained_glass_pane,purple_stained_glass_pane,red_stained_glass_pane,waxed_copper_bars,waxed_exposed_copper_bars,waxed_oxidized_copper_bars,waxed_weathered_copper_bars,weathered_copper_bars,white_stained_glass_pane,yellow_stained_glass_pane": [
+    {
+     "condition": "minecraft:connection_east=-",
+     "connections": {
+      "1_0_0=$solid_block|this_group|#block/walls|#blocks/walls": {
+       "blockState": {
+        "east": "true"
+       }
+      },
+      "-1_0_0=$solid_block|this_group|#block/walls|#blocks/walls": {
+       "blockState": {
+        "west": "true"
+       }
+      },
+      "0_0_-1=$solid_block|this_group|#block/walls|#blocks/walls": {
+       "blockState": {
+        "north": "true"
+       }
+      },
+      "0_0_1=$solid_block|this_group|#block/walls|#blocks/walls": {
+       "blockState": {
+        "south": "true"
+       }
+      }
+     }
+    }
+   ],
+   "acacia_fence,bamboo_fence,birch_fence,cherry_fence,crimson_fence,dark_oak_fence,jungle_fence,mangrove_fence,oak_fence,pale_oak_fence,poplar_fence,spruce_fence,warped_fence": [
+    {
+     "condition": "minecraft:connection_east=-",
+     "connections": {
+      "1_0_0=$solid_block|this_group|#block/fence_gates[facing=north]|#blocks/fence_gates[facing=north]|#block/fence_gates[facing=south]|#blocks/fence_gates[facing=south]": {
+       "blockState": {
+        "east": "true"
+       }
+      },
+      "-1_0_0=$solid_block|this_group|#block/fence_gates[facing=north]|#blocks/fence_gates[facing=north]|#block/fence_gates[facing=south]|#blocks/fence_gates[facing=south]": {
+       "blockState": {
+        "west": "true"
+       }
+      },
+      "0_0_-1=$solid_block|this_group|#block/fence_gates[facing=east]|#blocks/fence_gates[facing=east]|#block/fence_gates[facing=west]|#blocks/fence_gates[facing=west]": {
+       "blockState": {
+        "north": "true"
+       }
+      },
+      "0_0_1=$solid_block|this_group|#block/fence_gates[facing=east]|#blocks/fence_gates[facing=east]|#block/fence_gates[facing=west]|#blocks/fence_gates[facing=west]": {
+       "blockState": {
+        "south": "true"
+       }
+      }
+     }
+    }
+   ],
+   "nether_brick_fence": [
+    {
+     "condition": "minecraft:connection_east=-",
+     "connections": {
+      "1_0_0=$solid_block|this_group|#block/fence_gates[facing=north]|#blocks/fence_gates[facing=north]|#block/fence_gates[facing=south]|#blocks/fence_gates[facing=south]": {
+       "blockState": {
+        "east": "true"
+       }
+      },
+      "-1_0_0=$solid_block|this_group|#block/fence_gates[facing=north]|#blocks/fence_gates[facing=north]|#block/fence_gates[facing=south]|#blocks/fence_gates[facing=south]": {
+       "blockState": {
+        "west": "true"
+       }
+      },
+      "0_0_-1=$solid_block|this_group|#block/fence_gates[facing=east]|#blocks/fence_gates[facing=east]|#block/fence_gates[facing=west]|#blocks/fence_gates[facing=west]": {
+       "blockState": {
+        "north": "true"
+       }
+      },
+      "0_0_1=$solid_block|this_group|#block/fence_gates[facing=east]|#blocks/fence_gates[facing=east]|#block/fence_gates[facing=west]|#blocks/fence_gates[facing=west]": {
+       "blockState": {
+        "south": "true"
+       }
+      }
+     }
+    }
+   ],
+   "#block/stairs,#blocks/stairs": [
+    {
+     "condition": "facing=north,half=bottom,minecraft:corner=-",
+     "connections": {
+      "0_0_1=#block/stairs[facing=east,half=bottom]|#blocks/stairs[facing=east,half=bottom]&1_0_0=!#block/stairs[facing=north,half=bottom]|#blocks/stairs[facing=north,half=bottom]": {
+       "blockState": {
+        "shape": "inner_right"
+       }
+      },
+      "0_0_1=#block/stairs[facing=west,half=bottom]|#blocks/stairs[facing=west,half=bottom]&-1_0_0=!#block/stairs[facing=north,half=bottom]|#blocks/stairs[facing=north,half=bottom]": {
+       "blockState": {
+        "shape": "inner_left"
+       }
+      }
+     }
+    },
+    {
+     "condition": "facing=north,half=bottom,minecraft:corner=-",
+     "connections": {
+      "0_0_-1=#block/stairs[facing=east,half=bottom]|#blocks/stairs[facing=east,half=bottom]&-1_0_0=!#block/stairs[facing=north,half=bottom]|#blocks/stairs[facing=north,half=bottom]": {
+       "blockState": {
+        "shape": "outer_right"
+       }
+      },
+      "0_0_-1=#block/stairs[facing=west,half=bottom]|#blocks/stairs[facing=west,half=bottom]&1_0_0=!#block/stairs[facing=north,half=bottom]|#blocks/stairs[facing=north,half=bottom]": {
+       "blockState": {
+        "shape": "outer_left"
+       }
+      }
+     }
+    },
+    {
+     "condition": "facing=north,half=top,minecraft:corner=-",
+     "connections": {
+      "0_0_1=#block/stairs[facing=east,half=top]|#blocks/stairs[facing=east,half=top]&1_0_0=!#block/stairs[facing=north,half=top]|#blocks/stairs[facing=north,half=top]": {
+       "blockState": {
+        "shape": "inner_right"
+       }
+      },
+      "0_0_1=#block/stairs[facing=west,half=top]|#blocks/stairs[facing=west,half=top]&-1_0_0=!#block/stairs[facing=north,half=top]|#blocks/stairs[facing=north,half=top]": {
+       "blockState": {
+        "shape": "inner_left"
+       }
+      }
+     }
+    },
+    {
+     "condition": "facing=north,half=top,minecraft:corner=-",
+     "connections": {
+      "0_0_-1=#block/stairs[facing=east,half=top]|#blocks/stairs[facing=east,half=top]&-1_0_0=!#block/stairs[facing=north,half=top]|#blocks/stairs[facing=north,half=top]": {
+       "blockState": {
+        "shape": "outer_right"
+       }
+      },
+      "0_0_-1=#block/stairs[facing=west,half=top]|#blocks/stairs[facing=west,half=top]&1_0_0=!#block/stairs[facing=north,half=top]|#blocks/stairs[facing=north,half=top]": {
+       "blockState": {
+        "shape": "outer_left"
+       }
+      }
+     }
+    },
+    {
+     "condition": "facing=south,half=bottom,minecraft:corner=-",
+     "connections": {
+      "0_0_-1=#block/stairs[facing=east,half=bottom]|#blocks/stairs[facing=east,half=bottom]&1_0_0=!#block/stairs[facing=south,half=bottom]|#blocks/stairs[facing=south,half=bottom]": {
+       "blockState": {
+        "shape": "inner_left"
+       }
+      },
+      "0_0_-1=#block/stairs[facing=west,half=bottom]|#blocks/stairs[facing=west,half=bottom]&-1_0_0=!#block/stairs[facing=south,half=bottom]|#blocks/stairs[facing=south,half=bottom]": {
+       "blockState": {
+        "shape": "inner_right"
+       }
+      }
+     }
+    },
+    {
+     "condition": "facing=south,half=bottom,minecraft:corner=-",
+     "connections": {
+      "0_0_1=#block/stairs[facing=east,half=bottom]|#blocks/stairs[facing=east,half=bottom]&-1_0_0=!#block/stairs[facing=south,half=bottom]|#blocks/stairs[facing=south,half=bottom]": {
+       "blockState": {
+        "shape": "outer_left"
+       }
+      },
+      "0_0_1=#block/stairs[facing=west,half=bottom]|#blocks/stairs[facing=west,half=bottom]&1_0_0=!#block/stairs[facing=south,half=bottom]|#blocks/stairs[facing=south,half=bottom]": {
+       "blockState": {
+        "shape": "outer_right"
+       }
+      }
+     }
+    },
+    {
+     "condition": "facing=south,half=top,minecraft:corner=-",
+     "connections": {
+      "0_0_-1=#block/stairs[facing=east,half=top]|#blocks/stairs[facing=east,half=top]&1_0_0=!#block/stairs[facing=south,half=top]|#blocks/stairs[facing=south,half=top]": {
+       "blockState": {
+        "shape": "inner_left"
+       }
+      },
+      "0_0_-1=#block/stairs[facing=west,half=top]|#blocks/stairs[facing=west,half=top]&-1_0_0=!#block/stairs[facing=south,half=top]|#blocks/stairs[facing=south,half=top]": {
+       "blockState": {
+        "shape": "inner_right"
+       }
+      }
+     }
+    },
+    {
+     "condition": "facing=south,half=top,minecraft:corner=-",
+     "connections": {
+      "0_0_1=#block/stairs[facing=east,half=top]|#blocks/stairs[facing=east,half=top]&-1_0_0=!#block/stairs[facing=south,half=top]|#blocks/stairs[facing=south,half=top]": {
+       "blockState": {
+        "shape": "outer_left"
+       }
+      },
+      "0_0_1=#block/stairs[facing=west,half=top]|#blocks/stairs[facing=west,half=top]&1_0_0=!#block/stairs[facing=south,half=top]|#blocks/stairs[facing=south,half=top]": {
+       "blockState": {
+        "shape": "outer_right"
+       }
+      }
+     }
+    },
+    {
+     "condition": "facing=east,half=bottom,minecraft:corner=-",
+     "connections": {
+      "-1_0_0=#block/stairs[facing=north,half=bottom]|#blocks/stairs[facing=north,half=bottom]&0_0_-1=!#block/stairs[facing=east,half=bottom]|#blocks/stairs[facing=east,half=bottom]": {
+       "blockState": {
+        "shape": "inner_left"
+       }
+      },
+      "-1_0_0=#block/stairs[facing=south,half=bottom]|#blocks/stairs[facing=south,half=bottom]&0_0_1=!#block/stairs[facing=east,half=bottom]|#blocks/stairs[facing=east,half=bottom]": {
+       "blockState": {
+        "shape": "inner_right"
+       }
+      }
+     }
+    },
+    {
+     "condition": "facing=east,half=bottom,minecraft:corner=-",
+     "connections": {
+      "1_0_0=#block/stairs[facing=north,half=bottom]|#blocks/stairs[facing=north,half=bottom]&0_0_1=!#block/stairs[facing=east,half=bottom]|#blocks/stairs[facing=east,half=bottom]": {
+       "blockState": {
+        "shape": "outer_left"
+       }
+      },
+      "1_0_0=#block/stairs[facing=south,half=bottom]|#blocks/stairs[facing=south,half=bottom]&0_0_-1=!#block/stairs[facing=east,half=bottom]|#blocks/stairs[facing=east,half=bottom]": {
+       "blockState": {
+        "shape": "outer_right"
+       }
+      }
+     }
+    },
+    {
+     "condition": "facing=east,half=top,minecraft:corner=-",
+     "connections": {
+      "-1_0_0=#block/stairs[facing=north,half=top]|#blocks/stairs[facing=north,half=top]&0_0_-1=!#block/stairs[facing=east,half=top]|#blocks/stairs[facing=east,half=top]": {
+       "blockState": {
+        "shape": "inner_left"
+       }
+      },
+      "-1_0_0=#block/stairs[facing=south,half=top]|#blocks/stairs[facing=south,half=top]&0_0_1=!#block/stairs[facing=east,half=top]|#blocks/stairs[facing=east,half=top]": {
+       "blockState": {
+        "shape": "inner_right"
+       }
+      }
+     }
+    },
+    {
+     "condition": "facing=east,half=top,minecraft:corner=-",
+     "connections": {
+      "1_0_0=#block/stairs[facing=north,half=top]|#blocks/stairs[facing=north,half=top]&0_0_1=!#block/stairs[facing=east,half=top]|#blocks/stairs[facing=east,half=top]": {
+       "blockState": {
+        "shape": "outer_left"
+       }
+      },
+      "1_0_0=#block/stairs[facing=south,half=top]|#blocks/stairs[facing=south,half=top]&0_0_-1=!#block/stairs[facing=east,half=top]|#blocks/stairs[facing=east,half=top]": {
+       "blockState": {
+        "shape": "outer_right"
+       }
+      }
+     }
+    },
+    {
+     "condition": "facing=west,half=bottom,minecraft:corner=-",
+     "connections": {
+      "1_0_0=#block/stairs[facing=north,half=bottom]|#blocks/stairs[facing=north,half=bottom]&0_0_-1=!#block/stairs[facing=west,half=bottom]|#blocks/stairs[facing=west,half=bottom]": {
+       "blockState": {
+        "shape": "inner_right"
+       }
+      },
+      "1_0_0=#block/stairs[facing=south,half=bottom]|#blocks/stairs[facing=south,half=bottom]&0_0_1=!#block/stairs[facing=west,half=bottom]|#blocks/stairs[facing=west,half=bottom]": {
+       "blockState": {
+        "shape": "inner_left"
+       }
+      }
+     }
+    },
+    {
+     "condition": "facing=west,half=bottom,minecraft:corner=-",
+     "connections": {
+      "-1_0_0=#block/stairs[facing=north,half=bottom]|#blocks/stairs[facing=north,half=bottom]&0_0_1=!#block/stairs[facing=west,half=bottom]|#blocks/stairs[facing=west,half=bottom]": {
+       "blockState": {
+        "shape": "outer_right"
+       }
+      },
+      "-1_0_0=#block/stairs[facing=south,half=bottom]|#blocks/stairs[facing=south,half=bottom]&0_0_-1=!#block/stairs[facing=west,half=bottom]|#blocks/stairs[facing=west,half=bottom]": {
+       "blockState": {
+        "shape": "outer_left"
+       }
+      }
+     }
+    },
+    {
+     "condition": "facing=west,half=top,minecraft:corner=-",
+     "connections": {
+      "1_0_0=#block/stairs[facing=north,half=top]|#blocks/stairs[facing=north,half=top]&0_0_-1=!#block/stairs[facing=west,half=top]|#blocks/stairs[facing=west,half=top]": {
+       "blockState": {
+        "shape": "inner_right"
+       }
+      },
+      "1_0_0=#block/stairs[facing=south,half=top]|#blocks/stairs[facing=south,half=top]&0_0_1=!#block/stairs[facing=west,half=top]|#blocks/stairs[facing=west,half=top]": {
+       "blockState": {
+        "shape": "inner_left"
+       }
+      }
+     }
+    },
+    {
+     "condition": "facing=west,half=top,minecraft:corner=-",
+     "connections": {
+      "-1_0_0=#block/stairs[facing=north,half=top]|#blocks/stairs[facing=north,half=top]&0_0_1=!#block/stairs[facing=west,half=top]|#blocks/stairs[facing=west,half=top]": {
+       "blockState": {
+        "shape": "outer_right"
+       }
+      },
+      "-1_0_0=#block/stairs[facing=south,half=top]|#blocks/stairs[facing=south,half=top]&0_0_-1=!#block/stairs[facing=west,half=top]|#blocks/stairs[facing=west,half=top]": {
+       "blockState": {
+        "shape": "outer_left"
+       }
+      }
+     }
+    }
+   ],
+   "chorus_plant": [
+    {
+     "connections": {
+      "1_0_0=this_group|chorus_flower": {
+       "blockState": {
+        "east": "true"
+       }
+      },
+      "-1_0_0=this_group|chorus_flower": {
+       "blockState": {
+        "west": "true"
+       }
+      },
+      "0_0_-1=this_group|chorus_flower": {
+       "blockState": {
+        "north": "true"
+       }
+      },
+      "0_0_1=this_group|chorus_flower": {
+       "blockState": {
+        "south": "true"
+       }
+      },
+      "0_1_0=this_group|chorus_flower": {
+       "blockState": {
+        "up": "true"
+       }
+      },
+      "0_-1_0=this_group|chorus_flower": {
+       "blockState": {
+        "down": "true"
+       }
+      }
+     },
+     "condition": "minecraft:connection_up=-"
+    }
+   ],
+   "#blocks/fire,#block/fire": [
+    {
+     "connections": {
+      "1_0_0=!air|this_group": {
+       "blockState": {
+        "east": "true"
+       }
+      },
+      "-1_0_0=!air|this_group": {
+       "blockState": {
+        "west": "true"
+       }
+      },
+      "0_0_-1=!air|this_group": {
+       "blockState": {
+        "north": "true"
+       }
+      },
+      "0_0_1=!air|this_group": {
+       "blockState": {
+        "south": "true"
+       }
+      },
+      "0_1_0=!air|this_group": {
+       "blockState": {
+        "up": "true"
+       }
+      }
+     },
+     "condition": "minecraft:connection_up=-"
+    },
+    {
+     "connections": {
+      "0_-1_0=!air|this_group": {
+       "blockState": {
+        "east": "false",
+        "west": "false",
+        "north": "false",
+        "south": "false",
+        "up": "false"
+       }
+      }
+     },
+     "condition": "minecraft:connection_up=-"
+    }
+   ],
+   "redstone_wire": [
+    {
+     "connections": {
+      "1_0_0=redstone_block|#block/buttons|#blocks/buttons|calibrated_sculk_sensor|daylight_detector|detector_rail|jukebox|lectern|lever|lightning_rod|observer|#block/pressure_plates|#blocks/pressure_plates|redstone_torch|redstone_wall_torch|target|trapped_chest|tripwire_hook|redstone_wire|repeater|comparator": {
+       "blockState": {
+        "east": "side",
+        "west": "side"
+       }
+      },
+      "-1_0_0=redstone_block|#block/buttons|#blocks/buttons|calibrated_sculk_sensor|daylight_detector|detector_rail|jukebox|lectern|lever|lightning_rod|observer|#block/pressure_plates|#blocks/pressure_plates|redstone_torch|redstone_wall_torch|target|trapped_chest|tripwire_hook|redstone_wire|repeater|comparator": {
+       "blockState": {
+        "east": "side",
+        "west": "side"
+       }
+      },
+      "0_0_1=redstone_block|#block/buttons|#blocks/buttons|calibrated_sculk_sensor|daylight_detector|detector_rail|jukebox|lectern|lever|lightning_rod|observer|#block/pressure_plates|#blocks/pressure_plates|redstone_torch|redstone_wall_torch|target|trapped_chest|tripwire_hook|redstone_wire|repeater|comparator": {
+       "blockState": {
+        "north": "side",
+        "south": "side"
+       }
+      },
+      "0_0_-1=redstone_block|#block/buttons|#blocks/buttons|calibrated_sculk_sensor|daylight_detector|detector_rail|jukebox|lectern|lever|lightning_rod|observer|#block/pressure_plates|#blocks/pressure_plates|redstone_torch|redstone_wall_torch|target|trapped_chest|tripwire_hook|redstone_wire|repeater|comparator": {
+       "blockState": {
+        "north": "side",
+        "south": "side"
+       }
+      },
+      "1_-1_0=redstone_block|#block/buttons|#blocks/buttons|calibrated_sculk_sensor|daylight_detector|detector_rail|jukebox|lectern|lever|lightning_rod|observer|#block/pressure_plates|#blocks/pressure_plates|redstone_torch|redstone_wall_torch|target|trapped_chest|tripwire_hook|redstone_wire|repeater|comparator": {
+       "blockState": {
+        "east": "side",
+        "west": "side"
+       }
+      },
+      "-1_-1_0=redstone_block|#block/buttons|#blocks/buttons|calibrated_sculk_sensor|daylight_detector|detector_rail|jukebox|lectern|lever|lightning_rod|observer|#block/pressure_plates|#blocks/pressure_plates|redstone_torch|redstone_wall_torch|target|trapped_chest|tripwire_hook|redstone_wire|repeater|comparator": {
+       "blockState": {
+        "east": "side",
+        "west": "side"
+       }
+      },
+      "0_-1_1=redstone_block|#block/buttons|#blocks/buttons|calibrated_sculk_sensor|daylight_detector|detector_rail|jukebox|lectern|lever|lightning_rod|observer|#block/pressure_plates|#blocks/pressure_plates|redstone_torch|redstone_wall_torch|target|trapped_chest|tripwire_hook|redstone_wire|repeater|comparator": {
+       "blockState": {
+        "north": "side",
+        "south": "side"
+       }
+      },
+      "0_-1_-1=redstone_block|#block/buttons|#blocks/buttons|calibrated_sculk_sensor|daylight_detector|detector_rail|jukebox|lectern|lever|lightning_rod|observer|#block/pressure_plates|#blocks/pressure_plates|redstone_torch|redstone_wall_torch|target|trapped_chest|tripwire_hook|redstone_wire|repeater|comparator": {
+       "blockState": {
+        "north": "side",
+        "south": "side"
+       }
+      },
+      "1_1_0=redstone_block|#block/buttons|#blocks/buttons|calibrated_sculk_sensor|daylight_detector|detector_rail|jukebox|lectern|lever|lightning_rod|observer|#block/pressure_plates|#blocks/pressure_plates|redstone_torch|redstone_wall_torch|target|trapped_chest|tripwire_hook|redstone_wire|repeater|comparator": {
+       "blockState": {
+        "east": "side",
+        "west": "side"
+       }
+      },
+      "-1_1_0=redstone_block|#block/buttons|#blocks/buttons|calibrated_sculk_sensor|daylight_detector|detector_rail|jukebox|lectern|lever|lightning_rod|observer|#block/pressure_plates|#blocks/pressure_plates|redstone_torch|redstone_wall_torch|target|trapped_chest|tripwire_hook|redstone_wire|repeater|comparator": {
+       "blockState": {
+        "east": "side",
+        "west": "side"
+       }
+      },
+      "0_1_1=redstone_block|#block/buttons|#blocks/buttons|calibrated_sculk_sensor|daylight_detector|detector_rail|jukebox|lectern|lever|lightning_rod|observer|#block/pressure_plates|#blocks/pressure_plates|redstone_torch|redstone_wall_torch|target|trapped_chest|tripwire_hook|redstone_wire|repeater|comparator": {
+       "blockState": {
+        "north": "side",
+        "south": "side"
+       }
+      },
+      "0_1_-1=redstone_block|#block/buttons|#blocks/buttons|calibrated_sculk_sensor|daylight_detector|detector_rail|jukebox|lectern|lever|lightning_rod|observer|#block/pressure_plates|#blocks/pressure_plates|redstone_torch|redstone_wall_torch|target|trapped_chest|tripwire_hook|redstone_wire|repeater|comparator": {
+       "blockState": {
+        "north": "side",
+        "south": "side"
+       }
+      }
+     },
+     "condition": "redstone_east=-"
+    },
+    {
+     "connections": {
+      "1_1_0=redstone_block|#block/buttons|#blocks/buttons|calibrated_sculk_sensor|daylight_detector|detector_rail|jukebox|lectern|lever|lightning_rod|observer|#block/pressure_plates|#blocks/pressure_plates|redstone_torch|redstone_wall_torch|target|trapped_chest|tripwire_hook|redstone_wire|repeater|comparator": {
+       "blockState": {
+        "east": "up"
+       }
+      },
+      "-1_1_0=redstone_block|#block/buttons|#blocks/buttons|calibrated_sculk_sensor|daylight_detector|detector_rail|jukebox|lectern|lever|lightning_rod|observer|#block/pressure_plates|#blocks/pressure_plates|redstone_torch|redstone_wall_torch|target|trapped_chest|tripwire_hook|redstone_wire|repeater|comparator": {
+       "blockState": {
+        "west": "up"
+       }
+      },
+      "0_1_1=redstone_block|#block/buttons|#blocks/buttons|calibrated_sculk_sensor|daylight_detector|detector_rail|jukebox|lectern|lever|lightning_rod|observer|#block/pressure_plates|#blocks/pressure_plates|redstone_torch|redstone_wall_torch|target|trapped_chest|tripwire_hook|redstone_wire|repeater|comparator": {
+       "blockState": {
+        "south": "up"
+       }
+      },
+      "0_1_-1=redstone_block|#block/buttons|#blocks/buttons|calibrated_sculk_sensor|daylight_detector|detector_rail|jukebox|lectern|lever|lightning_rod|observer|#block/pressure_plates|#blocks/pressure_plates|redstone_torch|redstone_wall_torch|target|trapped_chest|tripwire_hook|redstone_wire|repeater|comparator": {
+       "blockState": {
+        "north": "up"
+       }
+      }
+     },
+     "condition": "redstone_east=-"
+    }
+   ]
+  }
+ }
+]

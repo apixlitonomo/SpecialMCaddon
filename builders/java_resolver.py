@@ -119,6 +119,8 @@ def _merge_java_model(filepath, pack_root, seen=None):
 def _resolve_texture_ref(texture_ref, textures):
     ref = texture_slot_reference(texture_ref)
     seen = set()
+    if ref and not ref.startswith("#") and isinstance(textures, dict) and ref in textures:
+        ref = "#" + ref  # a face may name its slot without the "#"
     while ref.startswith("#"):
         key = ref[1:]
         if key in seen:

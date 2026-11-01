@@ -10,7 +10,7 @@ transform per frame, whatever the scene holds.
 """
 import bpy
 
-from .outlines import STROKE_PASS, STROKE_LIGHT_PASS, set_value
+from .outlines import STROKE_PASS, STROKE_LIGHT_PASS, set_value, stroke_wanted
 
 GROUP = 'Sparkle Stroke'
 NODE = 'Sparkle Stroke'
@@ -278,6 +278,12 @@ def setup(scene):
     update(scene)
 
 
+def present(scene):
+    """Whether the stroke is set up in the scene's compositor."""
+    tree = scene.compositing_node_group
+    return PREVIOUS in scene or (tree is not None and tree.nodes.get(NODE) is not None)
+
+
 def remove(scene):
     tree = scene.compositing_node_group
     if tree is not None:
@@ -307,20 +313,23 @@ def remove(scene):
         bpy.data.node_groups.remove(group)
 
 
-def update(scene):
+def update(scene, outlined=None):
+    """Write the stroke's look. It is shared: the scene's toggle or any model's
+    own stroke turns it on, and the models that take it are in its mask."""
     tree = find_group(create=False)
     if tree is None:
         return
     s = scene.mcbedrock_outlines
+    wanted = stroke_wanted(scene, outlined)
     values = {
-        'Size': s.stroke_size * s.line_size if s.stroke else 0.,
+        'Size': s.stroke_size * s.line_size if wanted else 0.,
         'Position': POSITIONS[s.stroke_position],
-        'Opacity': s.stroke_opacity if s.stroke else 0.,
+        'Opacity': s.stroke_opacity if wanted else 0.,
         'Softness': s.stroke_softness,
         'Light': s.stroke_light,
         'Lit only': 1. if s.stroke_side == 'LIGHT' else 0.,
         'Shadow only': 1. if s.stroke_side == 'SHADOW' else 0.,
-        'Glow size': s.stroke_glow if s.stroke else 0.,
+        'Glow size': s.stroke_glow if wanted else 0.,
         'Glow strength': s.stroke_glow_strength,
     }
     for mode in BLENDS:

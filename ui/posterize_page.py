@@ -13,13 +13,14 @@ from . import posterize_session as service
 from .gpu_framework import Button, Column, Label, Rect, Row, Style, Toggle
 from .gpu_framework.motion import blend
 from .gpu_framework.navigation import Dropdown
-from .styled_pages import actions, button, prop
+from .live_color import LiveColor, set_color
+from .sky_page import SwatchButton
+from .styled_pages import actions, button, invoke, prop
 
 # The transparency checkerboard behind both previews: 10 px cells, even ones lighter.
 CHECKER = ((.34, .34, .34, 1.), (.22, .22, .22, 1.))
 CHECKER_CELL = 10.
 PROTECT_TINT = (.9, .3, .1, .4)
-RANGE_TINT = (.15, .65, 1., .45)
 # Overlay texels per side. A zoomed-out large mask pools into about the
 # previews' own resolution; any protected pixel keeps its texel lit.
 OVERLAY_LIMIT = 1024
@@ -144,11 +145,9 @@ def overlay_coverage(values, window, match=None, limit=OVERLAY_LIMIT):
 
 
 def overlay_request(session, s):
-    """What tints the previews: protection while a brush is chosen, else the highlighted range."""
+    """Protection tints the previews while a brush is chosen."""
     if s.tool in {'PROTECT', 'ERASE'}:
         return 'mask', session.mask_version, PROTECT_TINT
-    if s.highlight_range and s.lock_groups and session.ready and session.group_map is not None:
-        return 'range', (session.result_version, s.range_index), RANGE_TINT
     return None
 
 
@@ -176,20 +175,15 @@ def _overlay_texture(session, key, build):
 
 
 def draw_overlay(renderer, session, rect, uv, kind, version, tint):
-    """Tint protected pixels, or the highlighted range, over a preview as one texture."""
+    """Tint protected pixels over a preview as one texture."""
     if not _draws(renderer):
         return
-    s = service.settings()
     shape = session.mask.shape
     window = overlay_window(shape, uv)
     x0, x1, y0, y1 = window
     if x1 <= x0 or y1 <= y0:
         return
-    if kind == 'mask':
-        build = lambda: overlay_coverage(session.mask, window)
-    else:
-        build = lambda: overlay_coverage(session.group_map, window, match=s.range_index)
-    entry = _overlay_texture(session, (kind, version, window), build)
+    entry = _overlay_texture(session, (kind, version, window), lambda: overlay_coverage(session.mask, window))
     if entry is None:
         return
     texture, width, height, factor = entry
@@ -221,20 +215,28 @@ def contrast(first, second):
 
 
 class PosterizeSlider(Button):
-    def __init__(self, name, label):
-        self.name, self.label = name, label
+    """A setting from 0 to its maximum; ``off`` names what 0 means."""
+    def __init__(self, name, label, maximum=100, off=None):
+        self.name, self.label, self.maximum, self.off = name, label, maximum, off
         super().__init__('posterize.'+name, '', lambda ctx: None, style=Style(height=42))
+
+    def caption(self, value):
+        if value == 0 and self.off:
+            return f'{self.label}: {self.off}'
+        return f'{self.label}: {value}'
 
     def draw(self, renderer, state, theme):
         value = getattr(service.settings(), self.name)
         r = self.rect
-        renderer.text(Rect(r.x, r.y+19, r.width, 23), f'{self.label}: {value}', theme.text, size=11)
+        share = value/self.maximum
+        renderer.text(Rect(r.x, r.y+19, r.width, 23), self.caption(value), theme.text, size=11)
         renderer.rect(Rect(r.x+5, r.y+9, r.width-10, 4), blend(theme.surface_raised, theme.text_muted, TRACK_LIFT), radius=2)
-        renderer.rect(Rect(r.x+5, r.y+9, (r.width-10)*value/100, 4), theme.accent, radius=2)
-        renderer.rect(Rect(r.x+(r.width-10)*value/100, r.y+6, 10, 10), theme.text, radius=5)
+        renderer.rect(Rect(r.x+5, r.y+9, (r.width-10)*share, 4), theme.accent, radius=2)
+        renderer.rect(Rect(r.x+(r.width-10)*share, r.y+6, 10, 10), theme.text, radius=5)
 
     def pointer(self, x):
-        set_percent(self.name, round(100*max(0, min(1, (x-self.rect.x-5)/max(1,self.rect.width-10)))))
+        share = max(0, min(1, (x-self.rect.x-5)/max(1, self.rect.width-10)))
+        set_percent(self.name, round(self.maximum*share))
 
 
 def set_percent(name, value):
@@ -249,7 +251,7 @@ class PreviewCanvas(Button):
     def __init__(self, result=False):
         self.result = result
         super().__init__('posterize.preview.'+('result' if result else 'original'), '', lambda ctx: None,
-                         style=Style(height=190, flex=1))
+                         style=Style(height=190, flex=1), tooltip='Wheel: zoom · Middle-drag: pan')
 
     def image_rect(self):
         r = self.rect
@@ -307,65 +309,122 @@ class PreviewCanvas(Button):
             renderer.pop_clip()
 
 
-class LockedSwatch(Button):
-    def __init__(self,index,color):
-        self.color = color
-        super().__init__('posterize.lock.'+str(index),'',self.unlock,
-                         style=Style(width=24,height=24),tooltip='Click to release this source color')
+class PaletteSwatch(Button):
+    """One color of the result. Click to keep it exactly; kept colors are ringed."""
+    def __init__(self, index, color, kept):
+        self.color, self.kept = color, kept
+        super().__init__('posterize.palette.'+str(index), '', self.toggle, style=Style(width=22, height=22),
+                         tooltip='Kept exactly: click to release' if kept else 'Click to keep this color exactly')
 
-    def unlock(self,context):
-        if service.SESSION:
-            service.SESSION.locked.discard(self.color)
-            service.SESSION.request()
+    def toggle(self, context):
+        session = service.SESSION
+        if session:
+            session.kept.symmetric_difference_update({self.color})
+            session.request()
 
-    def draw(self,renderer,state,theme):
-        renderer.rect(self.rect,(*self.color,1),radius=3,border=theme.text_muted)
-        if state.get('_runtime_hover') == self.key:
-            # Light or dark, whichever stands out on this kept color.
-            cross = max((theme.text, theme.canvas), key=lambda ink: contrast(ink, self.color))
-            renderer.text(self.rect,'×',cross,size=14,align='CENTER')
+    def draw(self, renderer, state, theme):
+        renderer.rect(self.rect, (*self.color, 1), radius=3, border=theme.text if self.kept else theme.text_muted)
+        if self.kept or state.get('_runtime_hover') == self.key:
+            # Light or dark, whichever stands out on this color.
+            ink = max((theme.text, theme.canvas), key=lambda ink: contrast(ink, self.color))
+            renderer.text(self.rect, '×' if self.kept and state.get('_runtime_hover') == self.key else '•' if self.kept else '+',
+                          ink, size=13, align='CENTER')
+
+
+class RecolorSwatch(Button):
+    """The color being recolored; click, then click the texture to change it."""
+    def __init__(self, s):
+        self.color = tuple(s.recolor_pick)
+        super().__init__('posterize.recolor_swatch', '', lambda ctx: setattr(s, 'tool', 'RECOLOR'),
+                         style=Style(width=32, height=32), tooltip='Picked color: click, then click the texture')
+
+    def draw(self, renderer, state, theme):
+        renderer.rect(self.rect, (*self.color, 1), radius=3, border=theme.text_muted)
+
+
+COLOR_FIELDS = frozenset({'recolor_color', 'tint_color'})
+
+
+class PosterizeSwatch(SwatchButton):
+    """A Posterize colour; the picker changes the texture or model while it moves."""
+    def __init__(self, s, field, label):
+        super().__init__('posterize.'+field, label, invoke('mcbedrock.posterize_color', field=field), s, field)
+
+    def draw(self, renderer, state, theme):
+        Button.draw(self, renderer, state, theme)
+        # Posterize colours are stored as display (sRGB) values.
+        swatch = Rect(self.rect.right-28, self.rect.y+(self.rect.height-16)/2, 16, 16)
+        renderer.rect(swatch, (*tuple(getattr(self.settings, self.field))[:3], 1.), radius=4, border=theme.border)
+
+
+class MCBEDROCK_OT_posterize_color(LiveColor, bpy.types.Operator):
+    # The preview follows the picker while it moves (live_color.py). The
+    # picker's colour is scene-linear; Posterize stores sRGB.
+    bl_idname = 'mcbedrock.posterize_color'
+    bl_label = 'Choose color'
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    def begin(self, context):
+        if self.field not in COLOR_FIELDS:
+            return None
+        value = tuple(getattr(service.settings(context), self.field))[:3]
+        return {'field': self.field, 'original': value}, service.srgb_to_linear(value)
+
+    @classmethod
+    def apply(cls, context, state, color):
+        set_color(service.settings(context), state['field'], service.linear_to_srgb(color))
+
+    @classmethod
+    def restore(cls, context, state):
+        set_color(service.settings(context), state['field'], state['original'])
 
 
 def paint(canvas, x, y, previous=None):
     session = service.SESSION
-    point = canvas.pixel(x,y)
+    point = canvas.pixel(x, y)
     if not session or point is None:
         return point
     s = service.settings()
-    if s.tool == 'GROUP':
-        px,py = point
-        if session.source[py,px,3] > 0:
-            from ..builders.posterize import hsv_values
-            hue,saturation,value = (float(v) for v in hsv_values(session.source[py,px,:3]))
-            bpy.ops.mcbedrock.posterize_range('INVOKE_DEFAULT',action='ADD',label='Sampled range',
-                hue_min=(hue-8)%360,hue_max=(hue+8)%360,
-                sat_min=max(0,saturation-20),sat_max=min(100,saturation+20),
-                value_min=max(0,value-35),value_max=min(100,value+35),shades=1)
-    elif s.tool == 'LOCK':
-        px,py = point
-        if session.source[py,px,3] > 0:
-            color = tuple(float(c) for c in session.source[py,px,:3])
-            if color in session.locked:
-                session.locked.remove(color)
-            else:
-                session.locked.add(color)
+    px, py = point
+    if s.tool == 'RECOLOR':
+        if session.source[py, px, 3] > 0:
+            s.recolor_pick = tuple(float(c) for c in session.source[py, px, :3])
+            s.recolor_select = 'PICKED'
+            s.recolor = True
+    elif s.tool == 'KEEP':
+        if session.source[py, px, 3] > 0:
+            session.kept.symmetric_difference_update({tuple(float(c) for c in session.source[py, px, :3])})
             session.request()
-    elif s.tool in {'PROTECT','ERASE'}:
+    elif s.tool in {'PROTECT', 'ERASE'}:
         # Interpolate brush positions to avoid gaps on fast pointer movement.
         start = previous or point
         steps = max(abs(point[0]-start[0]), abs(point[1]-start[1]), 1)
-        h,w = session.mask.shape
+        h, w = session.mask.shape
         radius = s.radius
-        for t in np.linspace(0,1,steps+1):
-            px,py = (round(start[i]+(point[i]-start[i])*t) for i in range(2))
-            x0,x1 = max(0,px-radius+1), min(w,px+radius)
-            y0,y1 = max(0,py-radius+1), min(h,py+radius)
-            yy,xx = np.ogrid[y0:y1,x0:x1]
+        for t in np.linspace(0, 1, steps+1):
+            px, py = (round(start[i]+(point[i]-start[i])*t) for i in range(2))
+            x0, x1 = max(0, px-radius+1), min(w, px+radius)
+            y0, y1 = max(0, py-radius+1), min(h, py+radius)
+            yy, xx = np.ogrid[y0:y1, x0:x1]
             disk = (xx-px)**2+(yy-py)**2 < radius**2
-            view = session.mask[y0:y1,x0:x1]
-            view[disk] = s.tool == 'PROTECT'
+            session.mask[y0:y1, x0:x1][disk] = s.tool == 'PROTECT'
         session.mask_edited()
     return point
+
+
+def zoom_at(canvas, x, y, factor):
+    """Zoom both previews, keeping the pixel under the pointer in place."""
+    s = service.settings()
+    r = canvas.image_rect()
+    u0, v0, u1, v1 = canvas.uv()
+    fx = max(0, min(1, (x-r.x)/max(1, r.width)))
+    fy = max(0, min(1, (y-r.y)/max(1, r.height)))
+    u, v = u0+fx*(u1-u0), v0+fy*(v1-v0)
+    s.zoom = max(1, min(32, s.zoom*factor))
+    span = 1/s.zoom
+    half = span/2
+    s.pan_x = max(half, min(1-half, u-fx*span+half))
+    s.pan_y = max(half, min(1-half, v-fy*span+half))
 
 
 def handle_event(context, event, state, x, y, tree):
@@ -388,7 +447,7 @@ def handle_event(context, event, state, x, y, tree):
         if event.type == 'MOUSEMOVE':
             if isinstance(widget, PosterizeSlider):
                 widget.pointer(x)
-            elif service.settings().tool == 'PAN':
+            elif drag.get('pan_only') or service.settings().tool == 'PAN':
                 r = widget.image_rect()
                 s = service.settings()
                 half = .5/s.zoom
@@ -397,20 +456,24 @@ def handle_event(context, event, state, x, y, tree):
             else:
                 drag['last'] = paint(widget,x,y,drag.get('last'))
             return True
-        if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+        if event.type in {'LEFTMOUSE', 'MIDDLEMOUSE'} and event.value == 'RELEASE':
             state.pop('_posterize_drag',None)
             return True
         return False
     hit = tree.hit_test(x,y)
     if isinstance(hit,PreviewCanvas) and event.type in {'WHEELUPMOUSE','WHEELDOWNMOUSE'}:
+        zoom_at(hit,x,y,1.25 if event.type=='WHEELUPMOUSE' else .8)
+        return True
+    if isinstance(hit,PreviewCanvas) and event.type == 'MIDDLEMOUSE' and event.value == 'PRESS':
         s = service.settings()
-        s.zoom = max(1,min(32,s.zoom*(1.25 if event.type=='WHEELUPMOUSE' else .8)))
+        state['_posterize_drag'] = dict(key=hit.key,mouse=(x,y),pan=(s.pan_x,s.pan_y),pan_only=True)
         return True
     if event.type in {'LEFT_ARROW','RIGHT_ARROW','HOME','END'} and event.value == 'PRESS':
         focused = next((w for w in tree.walk() if w.key==state.get('_runtime_focus')),None)
         if isinstance(focused,PosterizeSlider):
             value = getattr(service.settings(),focused.name)+(1 if event.type=='RIGHT_ARROW' else -1)
-            set_percent(focused.name,0 if event.type=='HOME' else 100 if event.type=='END' else max(0,min(100,value)))
+            top = focused.maximum
+            set_percent(focused.name,0 if event.type=='HOME' else top if event.type=='END' else max(0,min(top,value)))
             return True
     if event.type != 'LEFTMOUSE' or event.value != 'PRESS':
         return False
@@ -425,7 +488,7 @@ def handle_event(context, event, state, x, y, tree):
         if s.tool in {'PROTECT','ERASE'}:
             drag['mask'] = service.SESSION.mask.copy()
         drag['last'] = paint(hit,x,y)
-        if s.tool not in {'LOCK','GROUP'}:
+        if s.tool not in {'KEEP','RECOLOR'}:
             state['_posterize_drag'] = drag
         return True
     return False
@@ -436,80 +499,84 @@ def command(action, text=None, enabled=True):
                   action=action,enabled=enabled,invoke_default=False)
 
 
-def range_button(action,text):
-    return button('posterize.range.'+action,text,'mcbedrock.posterize_range',action=action,
-                  invoke_default=action in {'ADD','EDIT'})
-
-
-def range_controls(s,session):
-    children = [Toggle('posterize.range_lock','Lock color ranges',lambda ctx:s.lock_groups,
-                       lambda ctx,v:setattr(s,'lock_groups',v)),
-                Toggle('posterize.range_advanced','Advanced color ranges',lambda ctx:s.advanced_ranges,
-                       lambda ctx,v:setattr(s,'advanced_ranges',v))]
-    if not s.lock_groups:
-        children.append(Label('posterize.range_warning','Unlocked: colors may mix across hues.',muted=True))
-    if not s.advanced_ranges:
+def recolor_controls(s):
+    children = [Toggle('posterize.recolor','Recolor',lambda ctx:s.recolor,lambda ctx,v:setattr(s,'recolor',v))]
+    if not s.recolor:
         return children
-    children.extend([Label('posterize.range_priority','First matching group wins overlaps.',muted=True),
-                     Label('posterize.range_unmatched','Unmatched colors stay unchanged.',muted=True)])
-    if s.ranges:
-        index = min(s.range_index,len(s.ranges)-1)
-        group = s.ranges[index]
-        children.append(Toggle('posterize.range_highlight','Highlight selected range',lambda ctx:s.highlight_range,
-                               lambda ctx,v:setattr(s,'highlight_range',v)))
-        children.append(Dropdown('posterize.range_select',lambda ctx:str(s.range_index),
-            lambda ctx,v:setattr(s,'range_index',int(v)),[(str(i),g.label) for i,g in enumerate(s.ranges)],style=Style(height=32)))
-        children.append(Label('posterize.range_hue',f'Hue {group.hue_min:g}° → {group.hue_max:g}°',muted=True))
-        children.append(Label('posterize.range_sv',f'S {group.sat_min:g}–{group.sat_max:g}% · Brightness {group.value_min:g}–{group.value_max:g}%',muted=True))
-        stats = session.stats.get('groups',[]) if session.ready else []
-        if index<len(stats):
-            g = stats[index]
-            children.append(Label('posterize.range_stats',f"{g['pixels']} pixels · {g['source']} → {g['result']} colors",muted=True))
-        children.extend([actions('posterize.range_edit',[range_button('EDIT','Edit Range'),range_button('REMOVE','Remove')]),
-                         actions('posterize.range_order',[range_button('UP','Move Up'),range_button('DOWN','Move Down')])])
-    children.extend([actions('posterize.range_add',[range_button('ADD','Add Range'),
-                      Button('posterize.range_sample','Sample Pixel',lambda ctx:setattr(s,'tool','GROUP'),style=Style(height=32,align='CENTER'))]),
-                     range_button('RESET','Reset Ranges')])
+    children.extend([PosterizeSwatch(s,'recolor_color','New color'),
+                     prop('posterize.recolor_select',s,'recolor_select','Recolor')])
+    if s.recolor_select == 'PICKED':
+        children.append(Row('posterize.recolor_picked',[RecolorSwatch(s),
+            Button('posterize.recolor_pick','Pick From Texture',lambda ctx:setattr(s,'tool','RECOLOR'),
+                   style=Style(height=32,align='CENTER',flex=1))],style=Style(height=32,gap=6)))
+    children.extend([PosterizeSlider('recolor_tolerance','Tolerance'),
+                     prop('posterize.recolor_mode',s,'recolor_mode','Shading')])
     return children
+
+
+def tint_controls(s,scene):
+    """The model's server tint, when it has parts a server colors."""
+    count = len(service.tint_sockets(scene,s.target)) if s.target and scene else 0
+    if not count:
+        return []
+    return [Label('posterize.tint_heading','Server tint',style=Style(height=22,font_weight='SemiBold')),
+            Label('posterize.tint_hint','Colors the parts the server tints, on every texture of this model.',muted=True),
+            PosterizeSwatch(s,'tint_color','Tint color'),
+            Button('posterize.tint_reset','Back to White',lambda ctx:setattr(s,'tint_color',(1.,1.,1.)),
+                   style=Style(height=32,align='CENTER'))]
+
+
+def palette_rows(session,width):
+    colors = session.stats.get('palette',[]) if session.ready else []
+    swatches = [PaletteSwatch(i,color,color in session.kept) for i,color in enumerate(colors)]
+    per_row = max(4,int((width-28)//26))  # 22 px swatches, 4 px apart, inside the page's margins
+    return [Row('posterize.palette_row.'+str(start),swatches[start:start+per_row],style=Style(height=22,gap=4))
+            for start in range(0,len(swatches),per_row)]
 
 
 def build_posterize(context,state):
     s = service.settings(context)
     session = service.SESSION
-    children = [Label('posterize.heading','Posterize',style=Style(height=28,font_size=15,font_weight='SemiBold')),
+    children = [Label('posterize.heading','Posterize & Recolor',style=Style(height=28,font_size=15,font_weight='SemiBold')),
+        button('posterize.model','Edit Model Texture','mcbedrock.posterize_target',primary=True,use_source=True),
         actions('posterize.sources',[button('posterize.open','Open Image','mcbedrock.posterize_open'),
-                                    command('PACK','Choose Pack Texture')]),
-        actions('posterize.modelsource',[button('posterize.model','Use Model Texture','mcbedrock.posterize_target',use_source=True),
-            button('posterize.existing','Blender Image','mcbedrock.posterize_image')])]
+                                    command('PACK','Pack Texture'),
+                                    button('posterize.existing','Blender Image','mcbedrock.posterize_image')])]
     if not session:
-        children.append(Label('posterize.empty','Choose a static sRGB color image to begin.',muted=True))
+        tint = tint_controls(s,context.scene)
+        if tint:
+            children.extend([Label('posterize.targetname',f'Model: {s.target.name}',muted=True),*tint,
+                             Label('posterize.no_texture',"This texture can't be posterized (animated), but the tint works.",muted=True)])
+        else:
+            children.append(Label('posterize.empty','Pick a model texture, or open any image.',muted=True))
         return Column('posterize.content',children,style=Style(gap=8))
     status = Label('posterize.status',session.status,muted=True)
     status.tooltip = session.status
+    brush = s.tool in {'PROTECT','ERASE'}
     children.extend([Label('posterize.source',session.source_name,muted=True),
         Row('posterize.previews',[PreviewCanvas(),PreviewCanvas(True)],style=Style(height=190,gap=6)),
         actions('posterize.view',[button('posterize.large','Larger Preview','mcbedrock.posterize_canvas'),command('FIT','Fit')]),
         Dropdown('posterize.tool',lambda ctx:s.tool,lambda ctx,v:setattr(s,'tool',v),
-            [('PAN','Pan previews'),('PROTECT','Protect details'),('ERASE','Erase protection'),('LOCK','Keep color: click pixel'),('GROUP','Sample color range')],
-            style=Style(height=32)),
-        prop('posterize.radius',s,'radius','Brush radius'),
-        Label('posterize.mask',f'{int(session.mask.sum())} protected pixels · {len(session.locked)} kept colors',muted=True),
-        *[Row('posterize.locks.'+str(start),[LockedSwatch(i,color) for i,color in enumerate(sorted(session.locked)[start:start+7],start)],
-              style=Style(height=24,gap=4)) for start in range(0,len(session.locked),7)],
-        actions('posterize.clear',[command('CLEAR_MASK','Clear Protection'),command('CLEAR_LOCKS','Clear Color Locks')]),
-        PosterizeSlider('strength','Posterization'),PosterizeSlider('cleanup','Detail cleanup'),
-        *range_controls(s,session),
-        Toggle('posterize.tileable','Tileable',lambda ctx:s.tileable,lambda ctx,v:setattr(s,'tileable',v)),
+            [('PAN','Tool: Pan'),('PROTECT','Tool: Protect pixels'),('ERASE','Tool: Erase protection'),
+             ('KEEP','Tool: Keep a color'),('RECOLOR','Tool: Pick recolor color')],style=Style(height=32)),
+        *([prop('posterize.radius',s,'radius','Brush size'),
+           actions('posterize.clear',[command('CLEAR_MASK',f'Clear Protection ({int(session.mask.sum())})')])] if brush else []),
+        PosterizeSlider('colors','Colors',maximum=64,off='all'),
+        PosterizeSlider('specks','Remove specks',off='off'),
+        Label('posterize.palette_hint','Click a color to keep it exactly.',muted=True),
+        *palette_rows(session,state.get('_content_width',360)),
+        *([command('CLEAR_KEPT',f'Release Kept Colors ({len(session.kept)})')] if session.kept else []),
+        *tint_controls(s,session.scene),
+        *recolor_controls(s),
+        Toggle('posterize.tileable','Seamless edges',lambda ctx:s.tileable,lambda ctx,v:setattr(s,'tileable',v)),
         status,
-        button('posterize.target','Choose Model Target','mcbedrock.posterize_target'),
-        Label('posterize.targetname',f'{s.target.name} / slot {s.slot} / {s.node}' if s.target else 'No model target',muted=True),
-        Toggle('posterize.layers','All model layers',lambda ctx:s.model_layers,lambda ctx,v:setattr(s,'model_layers',v)),
-        Toggle('posterize.live','Live model preview',lambda ctx:s.live,lambda ctx,v:setattr(s,'live',v)),
-        Toggle('posterize.original','Show original on model',lambda ctx:s.original,lambda ctx,v:setattr(s,'original',v)),
+        Label('posterize.targetname',f'Model: {s.target.name}' if s.target else 'No model chosen: Apply needs one',muted=True),
+        Toggle('posterize.live','Show on model',lambda ctx:s.live,lambda ctx,v:setattr(s,'live',v)),
+        Toggle('posterize.original','Show original',lambda ctx:s.original,lambda ctx,v:setattr(s,'original',v)),
         actions('posterize.commit',[Button('posterize.apply','Apply',lambda ctx:bpy.ops.mcbedrock.posterize_apply('EXEC_DEFAULT',True),
                                         style=Style(height=32,align='CENTER',enabled=session.ready and bool(s.target and s.node))),
                                     button('posterize.save','Save PNG','mcbedrock.posterize_save',enabled=session.ready)]),
-        actions('posterize.finish',[command('RESET','Reset'),command('CANCEL','Cancel')])])
+        actions('posterize.finish',[command('RESET','Reset'),command('CLOSE','Close')])])
     return Column('posterize.content',children,style=Style(gap=7))
 
 
@@ -556,76 +623,6 @@ class MCBEDROCK_OT_posterize_image(bpy.types.Operator):
             return {'CANCELLED'}
 
 
-class MCBEDROCK_OT_posterize_range(bpy.types.Operator):
-    bl_idname = 'mcbedrock.posterize_range'
-    bl_label = 'Posterize Color Range'
-    __annotations__ = service.range_properties()
-    action: bpy.props.StringProperty(default='EDIT',options={'HIDDEN'})
-
-    def invoke(self,context,event):
-        s = service.settings(context)
-        if self.action == 'EDIT':
-            if not 0<=s.range_index<len(s.ranges):
-                return {'CANCELLED'}
-            for key in service.RANGE_FIELDS:
-                setattr(self,key,getattr(s.ranges[s.range_index],key))
-        from .gpu_framework import runtime
-        runtime._NATIVE_DIALOG_OPEN = True
-        return context.window_manager.invoke_props_dialog(self,width=400)
-
-    def draw(self,context):
-        layout = self.layout
-        layout.prop(self,'label')
-        layout.prop(self,'enabled')
-        for low,high in [('hue_min','hue_max'),('sat_min','sat_max'),('value_min','value_max')]:
-            row = layout.row(align=True)
-            row.prop(self,low)
-            row.prop(self,high)
-        layout.label(text='Hue start > end wraps through red (0°).')
-        layout.prop(self,'shades')
-        layout.prop(self,'preserve')
-        layout.prop(self,'separate_muted')
-        layout.label(text='Only source colors in this range can replace each other.')
-        layout.label(text='New ranges are inserted first. Unmatched pixels are kept.')
-
-    def execute(self,context):
-        from .gpu_framework import runtime
-        runtime._NATIVE_DIALOG_OPEN = False
-        s = service.settings(context)
-        index = min(s.range_index,max(0,len(s.ranges)-1))
-        if self.action in {'ADD','EDIT'}:
-            if self.sat_min>self.sat_max or self.value_min>self.value_max:
-                self.report({'ERROR'},'Minimum saturation/brightness must not exceed maximum')
-                return {'CANCELLED'}
-            if self.action == 'EDIT' and not s.ranges:
-                return {'CANCELLED'}
-            group = s.ranges.add() if self.action=='ADD' else s.ranges[index]
-            for key in service.RANGE_FIELDS:
-                setattr(group,key,getattr(self,key))
-            group.name = group.label
-            if self.action=='ADD':
-                s.ranges.move(len(s.ranges)-1,0)
-                s.range_index = 0
-            s.advanced_ranges = True
-        elif self.action == 'RESET':
-            service.reset_ranges(s)
-        elif s.ranges and self.action == 'REMOVE':
-            s.ranges.remove(index)
-            s.range_index = min(index,max(0,len(s.ranges)-1))
-        elif s.ranges and self.action in {'UP','DOWN'}:
-            new = max(0,min(len(s.ranges)-1,index+(-1 if self.action=='UP' else 1)))
-            s.ranges.move(index,new)
-            s.range_index = new
-        if service.SESSION:
-            service.SESSION.request()
-        service.redraw()
-        return {'FINISHED'}
-
-    def cancel(self,context):
-        from .gpu_framework import runtime
-        runtime._NATIVE_DIALOG_OPEN = False
-
-
 # Search label -> (object, material slot, image node name, image), selection first.
 _TARGETS = {}
 
@@ -633,18 +630,21 @@ _TARGETS = {}
 def collect_targets(context):
     """Every image texture a model can be posterized through, labelled image first.
 
-    The selection and its model come first. A model lists each material's
-    image node once, however many of its meshes share that material, so a
-    schematic or world of thousands of chunks stays a short list.
+    The selection comes first, then the rest of its model. An entity in a
+    world export shares the world's root, so its "model" is every chunk.
+    A model lists each material's image node once, however many of its
+    meshes share that material, so a schematic or world of thousands of
+    chunks stays a short list.
     """
     scene = context.scene
     selected = set(context.selected_objects)
     active = context.active_object
+    model = set()
     if active:
         selected.add(active)
-        selected.update(service.model_meshes(scene,active))
+        model.update(service.model_meshes(scene,active))
     images, seen, roots, targets = {}, set(), {}, {}
-    for obj in sorted(scene.objects,key=lambda obj:(obj not in selected,obj.name)):
+    for obj in sorted(scene.objects,key=lambda obj:(obj not in selected,obj not in model,obj.name)):
         for index,slot in enumerate(obj.material_slots):
             material = slot.material
             if not material or not material.use_nodes or not material.node_tree:
@@ -718,10 +718,21 @@ class MCBEDROCK_OT_posterize_target(bpy.types.Operator):
             self.report({'ERROR'},'Choose a texture target again')
             return {'CANCELLED'}
         obj,index,node,image = target
+        s = service.settings(context)
         try:
             if self.use_source:
-                service.open_source(image,context)
-            s = service.settings(context)
+                try:
+                    service.open_source(image,context)
+                except ValueError as exc:
+                    # An animated texture can't be posterized, but the model's
+                    # server tint never touches pixels.
+                    if not service.tint_sockets(context.scene,obj):
+                        raise
+                    service.close()
+                    s.target,s.slot,s.node = obj,index,node
+                    self.report({'WARNING'},f'{exc}. Server tint still works for this model')
+                    service.redraw()
+                    return {'FINISHED'}
             s.target,s.slot,s.node = obj,index,node
             service.preview_changed(s,context)
             return {'FINISHED'}
@@ -736,7 +747,7 @@ class MCBEDROCK_OT_posterize_target(bpy.types.Operator):
 class MCBEDROCK_OT_posterize_action(bpy.types.Operator):
     bl_idname = 'mcbedrock.posterize_action'
     bl_label = 'Posterize Action'
-    action: bpy.props.EnumProperty(items=[(x,x,x) for x in ('PACK','FIT','CLEAR_MASK','CLEAR_LOCKS','RESET','CANCEL')])
+    action: bpy.props.EnumProperty(items=[(x,x,x) for x in ('PACK','FIT','CLEAR_MASK','CLEAR_KEPT','RESET','CLOSE')])
 
     def execute(self,context):
         s,session = service.settings(context),service.SESSION
@@ -756,22 +767,19 @@ class MCBEDROCK_OT_posterize_action(bpy.types.Operator):
             for ui in runtime._ACTIVE.values():
                 ui.state['app.active_tab'] = 'ASSETS'
             self.report({'INFO'},'Select a pack texture in Assets, then choose Posterize')
-        elif self.action == 'CANCEL':
+        elif self.action == 'CLOSE':
             service.close()
+            s.target = None
         elif self.action == 'FIT':
             s.zoom,s.pan_x,s.pan_y = 1,.5,.5
         elif session:
             if self.action in {'CLEAR_MASK','RESET'}:
                 session.mask[:] = False
                 session.mask_version += 1
-            if self.action in {'CLEAR_LOCKS','RESET'}:
-                session.locked.clear()
+            if self.action in {'CLEAR_KEPT','RESET'}:
+                session.kept.clear()
             if self.action == 'RESET':
-                s.strength,s.cleanup,s.tileable = 50,0,False
-                s.live,s.original = False,False
-                s.zoom,s.pan_x,s.pan_y = 1,.5,.5
-                s.lock_groups = True
-                service.reset_ranges(s)
+                service.reset_settings(s)
             session.request()
         service.redraw()
         return {'FINISHED'}
@@ -788,7 +796,6 @@ class MCBEDROCK_OT_posterize_apply(bpy.types.Operator):
             return {'CANCELLED'}
         try:
             session.apply()
-            service.settings(context).live = False
             service.redraw()
             return {'FINISHED'}
         except (ValueError,RuntimeError,ReferenceError) as exc:
@@ -820,9 +827,9 @@ class MCBEDROCK_OT_posterize_save(bpy.types.Operator,ExportHelper):
 
 
 _CANVASES = []
-TOOL_KEYS = {'P':'PAN','B':'PROTECT','E':'ERASE','K':'LOCK'}
+TOOL_KEYS = {'P':'PAN','B':'PROTECT','E':'ERASE','K':'KEEP','R':'RECOLOR'}
 # Close first: a narrow viewport cuts the end of the line, never the way out.
-HINT = 'Esc: close · Wheel: zoom · P: pan · B: protect · E: erase · K: keep color'
+HINT = 'Esc: close · Wheel: zoom · Middle-drag: pan · P: pan · B: protect · E: erase · K: keep color · R: pick recolor'
 # Clicks and the wheel over the preview's plate never reach the viewport underneath.
 PLATE_EVENTS = {'LEFTMOUSE','MIDDLEMOUSE','RIGHTMOUSE','BUTTON4MOUSE','BUTTON5MOUSE','BUTTON6MOUSE',
                 'BUTTON7MOUSE','WHEELUPMOUSE','WHEELDOWNMOUSE','WHEELINMOUSE','WHEELOUTMOUSE',
@@ -1043,10 +1050,11 @@ class MCBEDROCK_PT_posterize(bpy.types.Panel):
 
     def draw(self,context):
         layout,s,session = self.layout,service.settings(context),service.SESSION
-        layout.operator('mcbedrock.posterize_open',text='Open Image')
-        layout.operator('mcbedrock.posterize_image',text='Use Blender Image')
-        layout.operator('mcbedrock.posterize_target',text='Use Model Texture').use_source = True
-        layout.operator('mcbedrock.posterize_action',text='Choose Pack Texture').action = 'PACK'
+        layout.operator('mcbedrock.posterize_target',text='Edit Model Texture').use_source = True
+        row = layout.row()
+        row.operator('mcbedrock.posterize_open',text='Open Image')
+        row.operator('mcbedrock.posterize_action',text='Pack Texture').action = 'PACK'
+        row.operator('mcbedrock.posterize_image',text='Blender Image')
         # Native asset browser may be collapsed or use its gallery layout.
         index = context.scene.mcbedrock_browser_index
         assets = context.scene.mcbedrock_browser_assets
@@ -1055,44 +1063,33 @@ class MCBEDROCK_PT_posterize(bpy.types.Panel):
             row.operator_context = 'EXEC_DEFAULT'
             row.operator('mcbedrock.posterize_open',text='Use Selected Pack Texture').filepath = assets[index].source_path
         if not session:
+            if s.target and service.tint_sockets(context.scene,s.target):
+                layout.label(text=f'Model: {s.target.name}')
+                layout.prop(s,'tint_color')
             return
         layout.label(text=session.source_name)
-        layout.operator('mcbedrock.posterize_canvas',text='Before / After & Protect Details')
+        layout.operator('mcbedrock.posterize_canvas',text='Before / After Preview')
         layout.prop(s,'tool')
-        layout.prop(s,'radius')
-        layout.prop(s,'zoom')
-        layout.prop(s,'strength',slider=True)
-        layout.prop(s,'cleanup',slider=True)
-        layout.prop(s,'lock_groups')
-        layout.prop(s,'advanced_ranges')
-        if s.advanced_ranges:
-            layout.label(text='First matching group wins; unmatched colors stay.')
-            layout.prop(s,'highlight_range')
-            layout.template_list('UI_UL_list','posterize_ranges',s,'ranges',s,'range_index',rows=4)
-            if s.ranges:
-                group = s.ranges[min(s.range_index,len(s.ranges)-1)]
-                layout.label(text=group.label)
-                row = layout.row()
-                row.operator('mcbedrock.posterize_range',text='Edit Range').action = 'EDIT'
-                row.operator_context = 'EXEC_DEFAULT'
-                row.operator('mcbedrock.posterize_range',text='Remove').action = 'REMOVE'
-                row = layout.row()
-                row.operator_context = 'EXEC_DEFAULT'
-                row.operator('mcbedrock.posterize_range',text='Move Up').action = 'UP'
-                row.operator('mcbedrock.posterize_range',text='Move Down').action = 'DOWN'
-            row = layout.row()
-            row.operator('mcbedrock.posterize_range',text='Add Range').action = 'ADD'
-            row.operator_context = 'EXEC_DEFAULT'
-            row.operator('mcbedrock.posterize_range',text='Reset Ranges').action = 'RESET'
-            layout.label(text='Use Sample Range in the preview tool selector.')
+        if s.tool in {'PROTECT','ERASE'}:
+            layout.prop(s,'radius')
+            layout.operator('mcbedrock.posterize_action',text=f'Clear Protection ({int(session.mask.sum())})').action = 'CLEAR_MASK'
+        layout.prop(s,'colors',slider=True)
+        layout.prop(s,'specks',slider=True)
+        if session.kept:
+            layout.operator('mcbedrock.posterize_action',text=f'Release Kept Colors ({len(session.kept)})').action = 'CLEAR_KEPT'
+        if s.target and service.tint_sockets(session.scene,s.target):
+            layout.prop(s,'tint_color')
+        layout.prop(s,'recolor')
+        if s.recolor:
+            layout.prop(s,'recolor_color')
+            layout.prop(s,'recolor_select')
+            if s.recolor_select == 'PICKED':
+                layout.prop(s,'recolor_pick')
+            layout.prop(s,'recolor_tolerance',slider=True)
+            layout.prop(s,'recolor_mode')
         layout.prop(s,'tileable')
-        layout.label(text=f'{int(session.mask.sum())} protected pixels / {len(session.locked)} kept colors')
-        layout.operator('mcbedrock.posterize_action',text='Clear Protection').action = 'CLEAR_MASK'
-        layout.operator('mcbedrock.posterize_action',text='Clear Color Locks').action = 'CLEAR_LOCKS'
         layout.label(text=session.status)
-        layout.operator('mcbedrock.posterize_target',text='Choose Model Target')
-        layout.label(text=f'{s.target.name} / {s.node}' if s.target else 'No target')
-        layout.prop(s,'model_layers')
+        layout.label(text=f'Model: {s.target.name}' if s.target else 'No model chosen')
         layout.prop(s,'live')
         layout.prop(s,'original')
         row = layout.row()
@@ -1101,12 +1098,12 @@ class MCBEDROCK_PT_posterize(bpy.types.Panel):
         row.operator('mcbedrock.posterize_save',text='Save PNG')
         row = layout.row()
         row.operator('mcbedrock.posterize_action',text='Reset').action = 'RESET'
-        row.operator('mcbedrock.posterize_action',text='Cancel').action = 'CANCEL'
+        row.operator('mcbedrock.posterize_action',text='Close').action = 'CLOSE'
 
 
-CLASSES = (MCBEDROCK_OT_posterize_range,MCBEDROCK_OT_posterize_open,MCBEDROCK_OT_posterize_image,MCBEDROCK_OT_posterize_target,
+CLASSES = (MCBEDROCK_OT_posterize_open,MCBEDROCK_OT_posterize_image,MCBEDROCK_OT_posterize_target,
            MCBEDROCK_OT_posterize_action,MCBEDROCK_OT_posterize_apply,MCBEDROCK_OT_posterize_save,
-           MCBEDROCK_OT_posterize_canvas,MCBEDROCK_PT_posterize)
+           MCBEDROCK_OT_posterize_canvas,MCBEDROCK_OT_posterize_color,MCBEDROCK_PT_posterize)
 
 
 def register():

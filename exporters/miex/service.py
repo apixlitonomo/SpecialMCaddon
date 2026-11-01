@@ -26,9 +26,45 @@ class MiExError(RuntimeError):
     pass
 
 
+OUT_OF_MEMORY = ('MiEx ran out of Java memory. Try fewer resource packs or a smaller export, or raise Memory '
+                 'under More options, Runtime. See View log for details.')
+
+
+def fatal_line(line):
+    """The message for a JVM line that means MiEx can no longer answer, or None.
+
+    An uncaught error on MiEx's command thread ("Exception in thread "main" ...",
+    e.g. the StackOverflowError a Bedrock add-on block without geometry causes)
+    leaves the JVM running with nothing reading commands: every later request
+    would wait out its whole timeout."""
+    text = line.strip()
+    if 'java.lang.OutOfMemoryError' in text:
+        return OUT_OF_MEMORY
+    if text.startswith('Exception in thread "main"'):
+        rest = text[len('Exception in thread "main"'):].strip()
+        name = rest.split(':', 1)[0].split()[0] if rest else 'an uncaught error'
+        return 'MiEx stopped: %s. See View log.' % name
+    if text.startswith('java.lang.StackOverflowError') or (
+            text.startswith('Exception in thread') and 'java.lang.StackOverflowError' in text):
+        return 'MiEx stopped: java.lang.StackOverflowError. See View log.'
+    return None
+
+
+LOCKED_BEDROCK = ('Minecraft has this world open, so MiEx cannot read it. Close the world in Minecraft '
+                  '(or quit to the title screen), then try again.')
+
+
+def locked_world(line):
+    """A Bedrock world's LevelDB is locked while Minecraft has the world open.
+
+    MiEx only prints the IOException and goes on with no chunks, so the map and
+    an import would come out empty without a word."""
+    return 'Unable to acquire lock on' in line and 'LOCK' in line
+
+
 def parse_line(line):
     if 'java.lang.OutOfMemoryError' in line:
-        return 'error', 'MiEx ran out of Java memory. Try fewer resource packs or a smaller export, or raise Memory under More options, Runtime. See View log for details.'
+        return 'error', OUT_OF_MEMORY
     if line.startswith('[MSG] Locked world:'):
         return 'error', 'MiEx cannot access this world. Close it in Minecraft or choose a writable copy; see the log.'
     if line.strip() == '[INITIALISED]':
@@ -58,6 +94,16 @@ class Session:
         self.log_path = self.folder / 'miex.log'
         self.readers = []
         self.in_request = False
+        # MiEx's "[MSG] Error:" and "[MSG] Warning:" lines, for one short warning in Blender.
+        self.messages = []
+        # Set when MiEx can no longer answer; requests then fail at once and
+        # the World Exporter starts a new session.
+        self.failed = None
+
+    def take_messages(self):
+        with self.log_lock:
+            messages, self.messages = self.messages, []
+        return messages
 
     def _log(self, text):
         with self.log_lock:
@@ -69,8 +115,23 @@ class Session:
             for line in pipe:
                 # Preview and map responses run to megabytes; the log keeps their start.
                 self._log(line if len(line) <= LOG_LINE else line[:LOG_LINE] + ' … (%d characters)' % len(line))
+                if line.startswith(('[MSG] Error:', '[MSG] Warning:')):
+                    with self.log_lock:
+                        if len(self.messages) < 200:
+                            self.messages.append(line.strip()[:500])
                 # JVM failures are also written to stderr, without a command
                 # response. Surface them immediately instead of timing out.
+                if locked_world(line):
+                    # Only the request that hit it fails; the session can go on with other worlds.
+                    if self.in_request:
+                        self.events.put(('error', LOCKED_BEDROCK))
+                    continue
+                fatal = fatal_line(line)
+                if fatal:
+                    if not self.failed:
+                        self.failed = fatal
+                        self.events.put(('error', fatal))
+                    continue
                 if protocol or 'java.lang.OutOfMemoryError' in line:
                     try:
                         kind, data = parse_line(line)
@@ -147,6 +208,8 @@ class Session:
     def request(self, command, timeout=180, **args):
         if self.cancelled.is_set():
             raise MiExError('Cancelled')
+        if self.failed:
+            raise MiExError(self.failed)
         payload = dict(command=command, **args)
         self.in_request = True
         try:

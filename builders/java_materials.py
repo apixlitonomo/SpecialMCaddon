@@ -155,8 +155,21 @@ def _apply_tint(material, color):
         links.new(image_node.outputs["Color"], mix.inputs[1])
         mix.inputs[2].default_value = (color[0], color[1], color[2], 1.0)
         output = mix.outputs[0]
+    mix.name = mix.label = TINT_NODE
     mix.location = (image_node.location.x + 200, image_node.location.y)
     links.new(output, bsdf.inputs["Base Color"])
+
+
+TINT_NODE = "Minecraft Tint"
+
+
+def tint_socket(material):
+    """The colour input of the tint ``_apply_tint`` added, or None."""
+    node = material.node_tree.nodes.get(TINT_NODE) if material and material.use_nodes else None
+    if node is None:
+        return None
+    sockets = [s for s in node.inputs if s.type == "RGBA"]
+    return sockets[1] if len(sockets) >= 2 else None
 
 
 def _first_resolved_java_texture(textures, pack_root, namespace):

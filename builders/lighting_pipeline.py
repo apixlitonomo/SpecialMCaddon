@@ -193,6 +193,19 @@ def compensation(scene):
     return t
 
 
+def linked_from(socket):
+    """The output socket linked into an input socket, or None.
+
+    Blender's socket.links walks every link of the tree on each call. Every
+    render revisits each prepared material and asks about thousands of
+    sockets, most of them unlinked, so is_linked (a cached lookup) answers
+    first: 15,000 walks were 0.4 s of every render of an imported world."""
+    if socket is None or not socket.is_linked:
+        return None
+    links = socket.links
+    return links[0].from_socket if links else None
+
+
 def insert_color(tree,port,node):
     if port.links:tree.links.new(port.links[0].from_socket,node.inputs['Color'])
     else:node.inputs['Color'].default_value=port.default_value
@@ -250,14 +263,14 @@ def aov_coverage(scene,material):
     shaders=[n for n in tree.nodes if n.type=='BSDF_PRINCIPLED']
     if len(shaders)!=1:return
     alpha=shaders[0].inputs['Alpha']
-    source=alpha.links[0].from_socket if alpha.links else None
+    source=linked_from(alpha)
     names={pass_name(scene,suffix) for suffix in ['Emission','Emission mask']+[f'Grade {i}' for i in range(1,5)]}
     for aov in [n for n in tree.nodes if n.type=='OUTPUT_AOV' and n.aov_name in names]:
         for port in (aov.inputs['Color'],aov.inputs['Value']):
-            if not port.links:continue
-            node=port.links[0].from_node
+            value=linked_from(port)
+            if value is None:continue
+            node=value.node
             if not node.name.startswith(COVERAGE):
-                value=port.links[0].from_socket
                 if port.name=='Color':
                     node=tree.nodes.new('ShaderNodeVectorMath');node.operation='SCALE'
                     tree.links.new(value,node.inputs[0])
@@ -269,9 +282,10 @@ def aov_coverage(scene,material):
                 tree.links.new(node.outputs[0],port)
             weight=node.inputs['Scale'] if node.bl_idname=='ShaderNodeVectorMath' else node.inputs[1]
             if source is not None:
-                if not weight.links or weight.links[0].from_socket!=source:tree.links.new(source,weight)
+                if linked_from(weight)!=source:tree.links.new(source,weight)
             else:
-                for link in list(weight.links):tree.links.remove(link)
+                if weight.is_linked:
+                    for link in list(weight.links):tree.links.remove(link)
                 set_value(weight,'default_value',float(alpha.default_value))
 
 
@@ -699,9 +713,14 @@ def update(scene,force=False):
     native_color.sync(scene)
     required = ('MC Atmosphere',) if atmosphere.enabled(scene) else ('MC Terrain fog','MC Sun on terrain','MC Native mist strength')
     required += (*flat_fog.REQUIRED,film_look.NODE+' halation')
-    if s.compositor and s.compositor.nodes.get('MC Color balance') and any(not s.compositor.nodes.get(name) for name in required):
+    grade = s.compositor.nodes.get(atmosphere.GRADE) if s.compositor else None
+    if grade and any(not s.compositor.nodes.get(name) for name in required):
         setup(scene)
         return
+    looks = s.compositor.nodes.get('MC LOOCS Lighting') if grade else None
+    if looks and not grade.outputs[0].is_linked and atmosphere.enabled(scene):
+        # A look upgraded with its image path cut: one flat grey render.
+        atmosphere.repair(s.compositor, looks.inputs['Image'])
     update_sun_haze(scene)
     flat_fog.update(scene)
     film_look.update(scene)
@@ -818,6 +837,15 @@ def _report_once(what):
 def _slot_signature(scene):
     from . import sky_materials
     return tuple((obj.as_pointer(),tuple(slot.material.as_pointer() if slot.material else 0 for slot in obj.material_slots)) for obj in sky_materials.scene_meshes(scene))
+
+
+def materials_unchanged(scene):
+    """Every slot is as sky_materials.prepare() last matched it, and nothing
+    structural changed since (materials_changed marks that)."""
+    key=scene.as_pointer()
+    return (key in _signatures and key not in _material_dirty
+            and _material_counts.get(key)==(len(bpy.data.objects),len(bpy.data.materials))
+            and _signatures[key]==_slot_signature(scene))
 
 
 def materials_current(scene):

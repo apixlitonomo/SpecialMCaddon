@@ -11,6 +11,7 @@ import re
 import bpy
 
 from . import water_body, water_contact, water_depth
+from ..exporters.miex.world_scale import subtree_objects
 
 TAG = 'mcaddon_water_preset'
 # Dungeons II pattern cells per block and reflection weight, matched to the
@@ -836,11 +837,14 @@ def _objects(scene, collection):
         raise ValueError('This MiEx collection is shared with another scene; make an independent copy first')
     allowed = {collection, *collection.children_recursive}
     shared = {obj for other in bpy.data.scenes if other != scene for obj in other.objects}
-    for obj in collection.all_objects:
+    # Objects also linked outside the import, listed once: obj.users_collection
+    # scans every collection, per object.
+    outside = {obj for c in bpy.data.collections if c not in allowed for obj in c.objects}
+    outside.update(obj for other in bpy.data.scenes for obj in other.collection.objects)
+    for obj in subtree_objects(collection):
         if obj.type != 'MESH':
             continue
-        safe = not (obj.library or obj.override_library or obj in shared or
-                    any(c not in allowed for c in obj.users_collection))
+        safe = not (obj.library or obj.override_library or obj in shared or obj in outside)
         yield obj, safe
 
 
@@ -1158,7 +1162,7 @@ def outdated(collection):
         return True
     return any(slot.material is not None and slot.material.get(TAG) == 'PLAIN' and
                slot.material.get(VERSION_TAG, 0) < PLAIN_VERSION
-               for obj in collection.all_objects for slot in getattr(obj, 'material_slots', ()))
+               for obj in subtree_objects(collection) for slot in getattr(obj, 'material_slots', ()))
 
 
 def upgrade(scene):

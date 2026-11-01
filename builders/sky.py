@@ -1563,6 +1563,53 @@ def repair_world(scene):
     return True
 
 
+# The rig's suns. Trailer lighting leaves most of them dark at any one time:
+# the fill sun by day, the side skies always, the soft copies at Soft light
+# layers 0 (Daylight), the moon at noon and the sun at night.
+RIG_LIGHTS = ('Sun','Sun reflection','Moon','Fill','Sun soft 1','Sun soft 2','Sun soft 3','Sky left','Sky right')
+IDLE = 'mc_idle_hidden'     # object: hidden by the rig while it gives no light
+
+
+def _keyframed(scene):
+    """Sky settings keyframed on the scene: light strengths change on frames."""
+    action = scene.animation_data.action if scene.animation_data else None
+    if action is None:
+        return False
+    curves = list(getattr(action, 'fcurves', None) or ())
+    for layer in getattr(action, 'layers', None) or ():
+        for strip in getattr(layer, 'strips', None) or ():
+            for bag in getattr(strip, 'channelbags', None) or ():
+                curves += list(bag.fcurves)
+    return any(curve.data_path.startswith('mcbedrock_sky') for curve in curves)
+
+
+def rest_idle_lights(scene):
+    """Hide the rig's suns that give no light, and show them when they do.
+
+    EEVEE shades every pixel with every visible sun, dark or not: hidden,
+    Daylight renders with two suns instead of nine, the same picture faster.
+    Lights the user hid keep their state. While the sky moves (the day/night
+    cycle, keyframed sky settings) every light stays shown, since a render
+    would not see a light come back on in time; a running render leaves them
+    as the last update set them."""
+    if bpy.app.is_job_running('RENDER') or sky_drive.in_per_frame():
+        return
+    s = scene.mcbedrock_sky
+    moving = s.cycle_enabled or _keyframed(scene)
+    for role in RIG_LIGHTS:
+        obj = owned(scene, role)
+        if obj is None or obj.type != 'LIGHT':
+            continue
+        idle = not moving and obj.data.energy <= 0
+        if obj.get(IDLE):
+            if not idle:
+                obj.hide_render = obj.hide_viewport = False
+                del obj[IDLE]
+        elif idle and not obj.hide_render and not obj.hide_viewport:
+            obj.hide_render = obj.hide_viewport = True
+            obj[IDLE] = True
+
+
 def _update(scene, geometry=False):
     if not supports_sky():
         return
@@ -1980,6 +2027,7 @@ def _update(scene, geometry=False):
         for field,value in (('diffuse_factor',0.),('specular_factor',0.),('transmission_factor',0.),('volume_factor',1.)):
             set_sky_value(fog_light.data,field,value)
         set_sky_value(fog_light.data,'use_shadow',True)
+    rest_idle_lights(scene)
     missing_clouds = s.clouds > 0 and owned(scene,'Cloud') is None
     if (geometry or missing_clouds or (s.cloud_preset!='DUNGEONS' and s.collection.get('cloud_amount') != s.clouds)
             or (s.cloud_preset=='DUNGEONS' and (s.collection.get('cloud_density')!=s.dungeons_cloud_density
@@ -2522,7 +2570,12 @@ def render_update(scene, *args):
         return
     if hasattr(scene,'mcbedrock_sky'):
         if scene.mcbedrock_sky.active and (scene.mcbedrock_sky.loocs_enabled or atmosphere.enabled(scene)) and scene.mcbedrock_sky.auto_materials:
-            sky_materials.prepare(scene)
+            # Slots already matched and nothing structural changed since:
+            # preparing again redid the same work before every render (0.4 s
+            # on an imported world, every frame of an animation). The first
+            # render after loading a file still prepares.
+            if not lighting_pipeline.materials_unchanged(scene):
+                sky_materials.prepare(scene)
             lighting_pipeline.setup(scene)
         update(scene)
 

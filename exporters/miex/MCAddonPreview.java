@@ -52,18 +52,106 @@ public class MCAddonPreview extends Command {
 		return row.has(key) ? row.get(key).getAsInt() : fallback;
 	}
 
+	// Sparkle: MiEx's Chunk_unloader drops every chunk nobody read for a second, so
+	// previewed chunks usually load again here, on several threads at once (a chunk's
+	// ground and deep rows, and its neighbours' occlusion). While one thread loads a
+	// chunk its loadError reads true, so load() on another returns at once and that
+	// thread saw no layers: an empty mesh, which Sparkle kept as the chunk's answer.
+	private static final java.lang.reflect.Field LOADING = loadingField();
+	private static final long LOAD_WAIT_MS = 10000;
+
+	private static java.lang.reflect.Field loadingField() {
+		try {
+			java.lang.reflect.Field field = Chunk.class.getDeclaredField("isLoading");
+			field.setAccessible(true);
+			return field;
+		}catch(Exception ex) {
+			System.out.println("3D preview cannot see MiEx chunk loading (" + ex + "); it waits for loads by polling.");
+			return null;
+		}
+	}
+
+	// Without the isLoading field, a load error that outlasts this is taken as real.
+	private static final long LOAD_GRACE_MS = 250;
+
+	/** Loads the chunk, waiting out another thread's load of it. Null once loaded, else why not. */
+	static String load(Chunk chunk) {
+		long start = System.currentTimeMillis();
+		while(true) {
+			try {
+				chunk.load();
+			}catch(Exception ex) {
+				return "MiEx could not read it: " + ex;
+			}
+			if(chunk.isLoaded())
+				return null;
+			long waited = System.currentTimeMillis() - start;
+			boolean busy;
+			try {
+				busy = LOADING == null ? waited < LOAD_GRACE_MS : LOADING.getBoolean(chunk);
+			}catch(Exception ex) {
+				busy = waited < LOAD_GRACE_MS;
+			}
+			if(!busy)
+				return chunk.hasLoadError() ? "MiEx has no readable data for it" : "it did not load";
+			if(waited > LOAD_WAIT_MS)
+				return "it was still loading after " + LOAD_WAIT_MS / 1000 + " s";
+			try {
+				Thread.sleep(2);
+			}catch(InterruptedException ex) {
+				Thread.currentThread().interrupt();
+				return "loading it was interrupted";
+			}
+		}
+	}
+
+	private static JsonObject failure(int chunkX, int chunkZ, String reason, boolean retry) {
+		System.out.println("3D preview " + (retry ? "will retry" : "leaves out") + " chunk " + chunkX + ", " + chunkZ + ": " + reason);
+		JsonObject row = new JsonObject();
+		row.addProperty("chunkX", chunkX);
+		row.addProperty("chunkZ", chunkZ);
+		row.addProperty("reason", reason);
+		return row;
+	}
+
 	@Override
 	public JsonObject run(JsonObject command) {
 		JsonArray chunks = new JsonArray();
+		// Sparkle: chunks that could not be meshed now and should be asked for again,
+		// and chunks the world has nothing to draw for, each with the reason.
+		JsonArray failed = new JsonArray();
+		JsonArray absent = new JsonArray();
 		List<Task> tasks = new ArrayList<Task>();
-		if(command.has("chunks") && MCWorldExporter.getApp().getWorld() != null) {
+		nl.bramstout.mcworldexporter.world.World world = MCWorldExporter.getApp().getWorld();
+		if(command.has("chunks") && world != null && world.isPaused()) {
+			for(JsonElement element : command.getAsJsonArray("chunks"))
+				failed.add(failure(read(element.getAsJsonObject(), "chunkX", 0), read(element.getAsJsonObject(), "chunkZ", 0), "MiEx has the world paused", true));
+		}else if(command.has("chunks") && world != null) {
 			for(JsonElement element : command.getAsJsonArray("chunks")) {
 				final JsonObject row = element.getAsJsonObject();
 				tasks.add(Renderer2D.threadPool.submit(() -> {
+					int chunkX = read(row, "chunkX", 0), chunkZ = read(row, "chunkZ", 0);
 					try {
-						Chunk chunk = MCWorldExporter.getApp().getWorld().getChunk(read(row, "chunkX", 0), read(row, "chunkZ", 0));
-						if(chunk == null)
+						Chunk chunk = world.getChunk(chunkX, chunkZ);
+						String why = chunk == null ? "the world has no such chunk" : load(chunk);
+						if(why != null) {
+							// A chunk the world lacks, or one stored without data, stays empty; anything else is asked again.
+							boolean retry = chunk != null && !chunk.hasLoadError();
+							JsonObject lost = failure(chunkX, chunkZ, why, retry);
+							synchronized(chunks) {
+								(retry ? failed : absent).add(lost);
+							}
 							return;
+						}
+						// Neighbours occlude this chunk's border faces; load them before meshing too.
+						for(int dz = -1; dz <= 1; ++dz)
+							for(int dx = -1; dx <= 1; ++dx) {
+								if(dx == 0 && dz == 0)
+									continue;
+								Chunk neighbour = world.getChunk(chunkX + dx, chunkZ + dz);
+								if(neighbour != null)
+									load(neighbour);
+							}
 						MCAddonPreviewer previewer = new MCAddonPreviewer(chunk);
 						previewer.minX = read(row, "minX", previewer.minX);
 						previewer.minY = read(row, "minY", previewer.minY);
@@ -104,7 +192,12 @@ public class MCAddonPreview extends Command {
 							chunks.add(result);
 						}
 					}catch(Exception ex) {
+						// Sparkle: said and asked again, where upstream only printed it and the chunk stayed missing.
 						ex.printStackTrace();
+						JsonObject lost = failure(chunkX, chunkZ, "meshing it failed: " + ex, true);
+						synchronized(chunks) {
+							failed.add(lost);
+						}
 					}
 				}));
 			}
@@ -113,6 +206,8 @@ public class MCAddonPreview extends Command {
 			task.waitUntilTaskIsDoneFast();
 		JsonObject result = new JsonObject();
 		result.add("chunks", chunks);
+		result.add("failed", failed);
+		result.add("absent", absent);
 		return result;
 	}
 }
@@ -190,32 +285,50 @@ class MCAddonPreviewer {
 					
 					boolean calculatedBiome = false;
 					for(int layer = 0; layer < chunk.getLayerCount(); ++layer) {	
-						ChunkExporter.getLODBlockId(chunk, bx, by, bz, layer, lodSize, lodYSize, lodBlockIds, null, blockId);
-						if(blockId[0] < 0)
-							continue;
-						state = BlockStateRegistry.getBakedStateForBlock(blockId[0], blockId[1], blockId[2], blockId[3], layer, false);
-						
-						occlusion = getOcclusion(chunk, bx, by, bz, state, lodSize, lodYSize);
-						if(occlusion == Long.MAX_VALUE) {
-							continue; // Block is in cave
+						// Sparkle: a block MiEx cannot build (a server's custom block
+						// without a model throws) is left out on its own; the exception
+						// used to throw away the whole row, leaving a hole in the ground.
+						try {
+							ChunkExporter.getLODBlockId(chunk, bx, by, bz, layer, lodSize, lodYSize, lodBlockIds, null, blockId);
+							if(blockId[0] < 0)
+								continue;
+							state = BlockStateRegistry.getBakedStateForBlock(blockId[0], blockId[1], blockId[2], blockId[3], layer, false);
+							
+							try {
+								occlusion = getOcclusion(chunk, bx, by, bz, state, lodSize, lodYSize);
+							}catch(Exception ex) {
+								occlusion = 0; // A neighbour failed: draw every face rather than none.
+							}
+							if(occlusion == Long.MAX_VALUE) {
+								continue; // Block is in cave
+							}
+							
+							int biomeId = chunk.getBiomeIdLocal(bx, by, bz);
+							Biome biomeInstance = BiomeRegistry.getBiome(biomeId);
+							biome.clear();
+							
+							if(state.getTint() != null && !calculatedBiome) {
+								getBlendedBiome(chunk, wx, by, wz, biome);
+								calculatedBiome = true;
+							}
+							
+							handleBlock(models, state, blockId, chunk.getDataVersion(), occlusion, 
+										wx, by, wz, layer, biomeInstance, biome, 
+										lodSize, lodYSize, occlusionHandler, chunk, worldOffsetX, worldOffsetY, worldOffsetZ);
+						}catch(Exception ex) {
+							skipped(ex);
 						}
-						
-						int biomeId = chunk.getBiomeIdLocal(bx, by, bz);
-						Biome biomeInstance = BiomeRegistry.getBiome(biomeId);
-						biome.clear();
-						
-						if(state.getTint() != null && !calculatedBiome) {
-							getBlendedBiome(chunk, wx, by, wz, biome);
-							calculatedBiome = true;
-						}
-						
-						handleBlock(models, state, blockId, chunk.getDataVersion(), occlusion, 
-									wx, by, wz, layer, biomeInstance, biome, 
-									lodSize, lodYSize, occlusionHandler, chunk, worldOffsetX, worldOffsetY, worldOffsetZ);
 					}
 				}
 			}
 		}
+	}
+	
+	private static final java.util.Set<String> reportedSkips = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+	private static void skipped(Exception ex) {
+		if(reportedSkips.add(String.valueOf(ex.getMessage())))
+			System.out.println("3D preview left out a block it could not build: " + ex);
 	}
 	
 	private void handleBlock(List<Model> models, BakedBlockState state, int[] blockId, int dataVersion, long occlusion, 

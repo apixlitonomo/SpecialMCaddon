@@ -8,6 +8,7 @@ from .gpu_framework.core import Size
 from .gpu_framework.motion import tween, blend
 from .gpu_framework.navigation import Dropdown
 from .styled_pages import button, actions, invoke, scene_scan
+from .live_color import SettingColor
 from ..builders.sky import PRESETS, current_time, is_preset_current
 # The page offers the four time-of-day looks.
 TIME_PRESETS = ('DAY','GOLDEN','SUNSET','NIGHT')
@@ -625,31 +626,34 @@ class MCBEDROCK_OT_sky_value_edit(SkyOperator, bpy.types.Operator):
 COLOR_FIELDS={'fog_light_color','flat_fog_color','horizon_color','zenith_color','sun_color','moon_color','cloud_color','fog_color','surface_tint','shadow_color','sun_light_color','sun_world_haze_color','plain_background_color'}
 
 
-class MCBEDROCK_OT_sky_color(SkyOperator, bpy.types.Operator):
+class MCBEDROCK_OT_sky_color(SkyOperator, SettingColor, bpy.types.Operator):
+    # The sky follows the picker while it moves (live_color.py).
     bl_idname='mcbedrock.sky_color'
     bl_label='Choose color'
     bl_options={'UNDO'}
-    field:bpy.props.StringProperty()
-    color:bpy.props.FloatVectorProperty(subtype='COLOR',size=3,min=0,max=1)
+    settings='mcbedrock_sky'
+    fields=COLOR_FIELDS
+    MIXED={'horizon_color','zenith_color'}     # a chosen horizon or upper sky takes over from the look's
 
-    def invoke(self,context,event):
-        if self.field not in COLOR_FIELDS:
-            return {'CANCELLED'}
-        self.color=getattr(context.scene.mcbedrock_sky,self.field)
-        return context.window_manager.invoke_props_dialog(self,width=280)
+    def begin(self,context):
+        begun=super().begin(context)
+        if begun is not None:
+            begun[0]['mix']=context.scene.mcbedrock_sky.sky_color_mix
+        return begun
 
-    def draw(self,context):
-        self.layout.template_color_picker(self,'color',value_slider=True)
-        self.layout.prop(self,'color',text='')
-
-    def execute(self,context):
-        if self.field not in COLOR_FIELDS:
-            return {'CANCELLED'}
-        s=context.scene.mcbedrock_sky
-        setattr(s,self.field,self.color)
-        if self.field in {'horizon_color','zenith_color'}:
+    @classmethod
+    def apply(cls,context,state,color):
+        super().apply(context,state,color)
+        s=cls.owner(state)
+        if s is not None and state['field'] in cls.MIXED and s.sky_color_mix!=1:
             s.sky_color_mix=1
-        return {'FINISHED'}
+
+    @classmethod
+    def restore(cls,context,state):
+        super().restore(context,state)
+        s=cls.owner(state)
+        if s is not None and s.sky_color_mix!=state['mix']:
+            s.sky_color_mix=state['mix']
 
 
 class MCBEDROCK_OT_sky_pack(SkyOperator, bpy.types.Operator,ImportHelper):

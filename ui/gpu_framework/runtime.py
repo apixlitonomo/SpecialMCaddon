@@ -47,6 +47,9 @@ _HOST_TIMEOUT = 3.0
 # Blender 5.2 screen_ops.cc: TIMEOUT / TIMESTEP for region blending.
 _REGION_FADE_DURATION = .22
 _REGION_FADE_START = .9 - 1/60
+# An overlapping sidebar hidden from Python still plays Blender's own fade, and
+# reads as shown meanwhile; Sparkle has already faded and stays out of it.
+_SIDEBAR_HIDE_SETTLE = _REGION_FADE_DURATION + .15
 _GENERATION = 0
 
 
@@ -363,7 +366,16 @@ class RuntimeSession:
             and _pointer(bpy.context.region) in {self.key[2], _pointer(self.viewport_region)}
             and self.area.spaces.active.show_region_ui
             and self.key not in _FOLDED
+            and not self._sidebar_hiding()
         )
+
+    def _sidebar_hiding(self):
+        """True while Blender still fades out a sidebar Sparkle has just closed."""
+        since = getattr(self, '_hiding_since', None)
+        if since is not None and time.monotonic() - since < _SIDEBAR_HIDE_SETTLE:
+            return True
+        self._hiding_since = None
+        return False
 
     def _restore_navigation(self):
         original = getattr(self, '_native_navigation', None)
@@ -878,6 +890,7 @@ class RuntimeSession:
         return (getattr(self.region, 'active_panel_category', 'Sparkle') == 'Sparkle'
                 and self.area.spaces.active.show_region_ui
                 and self.key not in _FOLDED
+                and not self._sidebar_hiding()
                 and _pointer(getattr(context, 'window', None)) == self.key[0])
 
     def _event_targets_host_region(self, context, event):
@@ -906,6 +919,7 @@ class RuntimeSession:
             _FOLDED.add(self.key)
             self.state.pop('_runtime_focus', None)
         else:
+            self._hiding_since = time.monotonic()
             self.area.spaces.active.show_region_ui = False
         self._closing_started = None
         self._was_visible = False
@@ -915,6 +929,9 @@ class RuntimeSession:
         self.area.tag_redraw()
 
     def _begin_keyboard_close(self, context, event):
+        if (event.type == 'N' and event.value == 'PRESS'
+                and not self.area.spaces.active.show_region_ui):
+            self._hiding_since = None  # N opens the sidebar again: show it at once
         if (event.type != 'N' or event.value != 'PRESS'
                 or any(getattr(event, k, False) for k in ('ctrl', 'shift', 'alt', 'oskey'))
                 or _NATIVE_DIALOG_OPEN
@@ -923,6 +940,7 @@ class RuntimeSession:
                 or getattr(context.region, 'type', None) not in {'WINDOW', 'UI'}
                 or not self.area.spaces.active.show_region_ui
                 or self.key in _FOLDED
+                or self._sidebar_hiding()
                 or getattr(self.region, 'active_panel_category', '') != 'Sparkle'):
             return False
         focused = self._find_by_key(self.tree, self.state.get('_runtime_focus')) if self.tree else None
@@ -966,6 +984,7 @@ class RuntimeSession:
     def _follow_region_collapse(self):
         """Fold the panel when the sidebar collapses to its tabs; open it again with the sidebar."""
         if (self._finished or not self.area.spaces.active.show_region_ui
+                or self._sidebar_hiding()
                 or getattr(self.region, 'active_panel_category', '') != 'Sparkle'):
             return
         collapsed = self._region_collapsed()

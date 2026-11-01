@@ -2593,6 +2593,8 @@ def _register_impl():
         world_exporter.register()
         from .ui import mod_import
         mod_import.register()
+        from .ui import world_blocks
+        world_blocks.register()
         # Saved active-pack collections are the source of truth. Restore their
         # index-zero compatibility mirror after every dependent property exists.
         pack_manager.initialize_active_pack_state()
@@ -2611,7 +2613,11 @@ def register():
 
 def unregister():
     if bpy:
-        from .ui import mod_import, world_exporter
+        from .ui import mod_import, world_blocks, world_exporter
+        try:
+            world_blocks.unregister()
+        except Exception:
+            pass
         try:
             mod_import.unregister()
         except Exception:

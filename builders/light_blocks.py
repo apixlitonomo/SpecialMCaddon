@@ -74,14 +74,14 @@ def _shader(material):
 
 def _base_source(material, shader):
     """The texture behind Base Color, before Sparkle's surface finish layer."""
-    port = shader.inputs['Base Color']
-    if not port.links:
+    from .lighting_pipeline import linked_from
+    source = linked_from(shader.inputs['Base Color'])
+    if source is None:
         return None
-    node = port.links[0].from_node
+    node = source.node
     if node.type == 'GROUP' and node.name.startswith('MC Surface Finish'):
-        color = node.inputs.get('Color')
-        return color.links[0].from_socket if color and color.links else None
-    return port.links[0].from_socket
+        return linked_from(node.inputs.get('Color'))
+    return source
 
 
 def _texture(socket):
@@ -241,7 +241,7 @@ MAX_LIGHTS = 512
 CLUSTER = 4.
 MAX_SHADOWED = 96     # clusters nearest the camera that cast shadows
 REACH = 16.           # a block light's reach in blocks, as in the game
-LAYOUT = 3            # bump to re-place lights in saved scenes
+LAYOUT = 4            # bump to re-place lights in saved scenes
 GAIN = 'mc_cluster_gain'
 # Point-light power, in watts, of a level 15 light at the default brightness.
 POWER = 60.
@@ -308,27 +308,31 @@ def sources(scene):
             continue
         centers = np.empty(count * 3, np.float32)
         mesh.polygons.foreach_get('center', centers)
-        centers = centers.reshape(-1, 3)[chosen]
         normals = np.empty(count * 3, np.float32)
         mesh.polygons.foreach_get('normal', normals)
+        # World space, in blocks: a MiEx world imports Y-up and in model
+        # pixels, so its meshes' own axes are turned and 16x too fine.
+        matrix = np.array(obj.matrix_world, np.float64)
+        turn = matrix[:3, :3]
+        centers = centers.reshape(-1, 3)[chosen] @ turn.T + matrix[:3, 3]
+        normals = normals.reshape(-1, 3)[chosen] @ np.linalg.inv(turn)
+        normals /= np.maximum(np.linalg.norm(normals, axis=1), 1e-9)[:, None]
         # A face on a cell border belongs to the block it faces out of.
-        inside = centers - normals.reshape(-1, 3)[chosen] * .01
-        # Cells in the import's own block grid. The light sits just above
-        # the cell's highest face (a torch's flame), outside the model, so
-        # the block's own faces do not shadow it.
+        inside = centers - normals * .01
         for slot, cell, center in zip(index[chosen], np.floor(inside).astype(np.int64), centers):
-            key = (obj.name, *cell)
-            item = cells.setdefault(key, [obj, Vector(), 0, -1e9, 0, None, cell])
-            item[1] += Vector(center)
-            item[2] += 1
-            item[3] = max(item[3], float(center[2]))
-            if lit[slot][0] > item[4]:
-                item[4], item[5] = lit[slot]
+            item = cells.setdefault((obj.name, *cell), [[], 0, None, cell])
+            item[0].append(center)
+            if lit[slot][0] > item[1]:
+                item[1], item[2] = lit[slot]
     locations, kinds, grid = [], [], {}
-    for obj, total, faces, top, light, color, cell in cells.values():
-        middle = total / faces
-        middle.z = min(top + .1, cell[2] + .95)
-        location = obj.matrix_world @ middle
+    for faces, light, color, cell in cells.values():
+        # The light sits just above the cell's highest faces (a torch's
+        # flame, at the tip of a leaning wall torch), outside the model, so
+        # the block's own faces do not shadow it.
+        faces = np.array(faces)
+        top = faces[:, 2].max()
+        tip = faces[faces[:, 2] > top - .1].mean(axis=0)
+        location = Vector((tip[0], tip[1], min(top + .1, cell[2] + .95)))
         # A leaning wall torch or a lantern's chain can reach into the next
         # cell; pieces closer than most of a block are one light.
         key = tuple(int(v // .75) for v in location)

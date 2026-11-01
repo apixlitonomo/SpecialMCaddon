@@ -30,7 +30,7 @@ from .java_materials import (
     _first_resolved_java_texture,
     _make_java_material,
 )
-from .java_tints import grass_colormap_pixel, model_tint_colors
+from .java_tints import grass_colormap_pixel, model_tint_colors, server_tinted_indices
 
 # Minecraft stores element faces in an EnumMap, so they bake in Direction
 # order. With coplanar faces the later one draws on top.
@@ -98,6 +98,9 @@ def _grass_colormap(roots):
     return sampler
 
 
+TINT_ATTRIBUTE = "mc_tint_index"
+
+
 def _model_tints(model_id, roots):
     """Default colour per ``tintindex`` from item definitions (may be empty)."""
     return model_tint_colors(model_id, roots, _grass_colormap(roots))
@@ -159,30 +162,33 @@ def _generated_layer_paths(textures, pack_root, namespace):
     return paths
 
 
-def _composited_layer_image(paths, name, tints=()):
+def _composited_layer_image(paths, name, tints=(), runtime=()):
     """Stack every item layer into one packed image, like item/generated.
 
     Layer ``i`` is multiplied by tint ``i`` (leather, potions, spawn eggs) and
     later layers draw over earlier ones (armor trims, potion bottles). Returns
-    None when there is nothing to stack or tint, a layer animates, or a
-    layer's size does not scale evenly onto the largest one.
+    ``(image, share)``: ``share`` is a gray image of how much of each pixel
+    comes from the ``runtime`` layers a server colours (None without any).
+    ``image`` is None when there is nothing to stack or tint, a layer
+    animates, or a layer's size does not scale evenly onto the largest one.
     """
     tints = list(tints or ())[:len(paths)]
-    if len(paths) < 2 and not any(tints):
-        return None
+    runtime = {index for index in runtime if index < len(paths)}
+    if len(paths) < 2 and not any(tints) and not runtime:
+        return None, None
     import numpy
 
     frames = []
     for index, path in enumerate(paths):
         if os.path.isfile(f"{path}.mcmeta"):
-            return None
+            return None, None
         try:
             image = bpy.data.images.load(path, check_existing=True)
         except RuntimeError:
-            return None
+            return None, None
         width, height = int(image.size[0]), int(image.size[1])
         if width <= 0 or height <= 0:
-            return None
+            return None, None
         pixels = numpy.empty(width * height * 4, dtype=numpy.float32)
         image.pixels.foreach_get(pixels)
         frame = pixels.reshape(height, width, 4)
@@ -196,13 +202,15 @@ def _composited_layer_image(paths, name, tints=()):
     height = max(frame.shape[0] for frame in frames)
     premultiplied = numpy.zeros((height, width, 3), dtype=numpy.float32)
     coverage = numpy.zeros((height, width, 1), dtype=numpy.float32)
-    for frame in frames:
+    tinted = numpy.zeros((height, width, 1), dtype=numpy.float32)
+    for index, frame in enumerate(frames):
         if width % frame.shape[1] or height % frame.shape[0]:
-            return None
+            return None, None
         frame = numpy.repeat(frame, height // frame.shape[0], axis=0)
         frame = numpy.repeat(frame, width // frame.shape[1], axis=1)
         alpha = frame[..., 3:4]
         premultiplied = frame[..., :3] * alpha + premultiplied * (1.0 - alpha)
+        tinted = (alpha if index in runtime else 0.0) + tinted * (1.0 - alpha)
         coverage = alpha + coverage * (1.0 - alpha)
     colour = numpy.divide(
         premultiplied, coverage,
@@ -213,7 +221,33 @@ def _composited_layer_image(paths, name, tints=()):
     image.pixels.foreach_set(result.ravel())
     image.alpha_mode = "STRAIGHT"
     image.pack()
-    return image
+    share = None
+    if runtime:
+        fraction = numpy.divide(tinted, coverage, out=numpy.zeros_like(tinted), where=coverage > 0.0)
+        share = bpy.data.images.new(f"{name}_tint_share", width, height, alpha=False)
+        share.colorspace_settings.name = "Non-Color"
+        share.pixels.foreach_set(numpy.concatenate((fraction, fraction, fraction, numpy.ones_like(fraction)), axis=2).ravel())
+        share.pack()
+    return image, share
+
+
+def _tint_by_share(material, share):
+    """Drive the tint's strength by ``share`` (1 where a pixel is all dye)."""
+    from .java_materials import TINT_NODE
+    nodes = material.node_tree.nodes
+    mix = nodes.get(TINT_NODE)
+    image_node = next((n for n in nodes if n.type == "TEX_IMAGE" and n.image), None)
+    if mix is None or image_node is None:
+        return
+    node = nodes.new("ShaderNodeTexImage")
+    node.name = node.label = "Minecraft Tint Share"
+    node.image = share
+    node.interpolation = image_node.interpolation
+    node.location = (image_node.location.x, image_node.location.y - 280)
+    if image_node.inputs["Vector"].links:
+        material.node_tree.links.new(image_node.inputs["Vector"].links[0].from_socket, node.inputs["Vector"])
+    factor = mix.inputs["Factor"] if "Factor" in mix.inputs else mix.inputs[0]
+    material.node_tree.links.new(node.outputs["Color"], factor)
 
 
 def _build_generated_java_model(context, filepath, data, pack_root, namespace, model_id, interpolation="Closest", display_name=""):
@@ -227,9 +261,14 @@ def _build_generated_java_model(context, filepath, data, pack_root, namespace, m
 
     width = 1.0
     height = 1.0
-    composite = _composited_layer_image(
-        layer_paths, name, _model_tints(model_id, pack_root) if layer_paths else (),
-    )
+    runtime = server_tinted_indices(model_id, pack_root) or set()
+    layer_tints = list(_model_tints(model_id, pack_root)) if layer_paths else []
+    # A layer a server colours keeps its default on the material's tint node,
+    # not baked into the image, so a new tint replaces it.
+    runtime_tint = next((layer_tints[i] for i in sorted(runtime) if i < len(layer_tints) and layer_tints[i]), None)
+    composite, share = _composited_layer_image(
+        layer_paths, name, [None if i in runtime else tint for i, tint in enumerate(layer_tints)], runtime,
+    ) if layer_paths else (None, None)
     image = composite
     frame_height = 16
     if image is None and texture_path:
@@ -271,9 +310,15 @@ def _build_generated_java_model(context, filepath, data, pack_root, namespace, m
             col.objects.unlink(mesh_obj)
 
     mat_name = os.path.splitext(os.path.basename(texture_path))[0] if texture_path else name
-    mesh_obj.data.materials.append(_make_java_material(
+    material = _make_java_material(
         mat_name, texture_path, context, interpolation=interpolation, image=composite,
-    ))
+    )
+    if share is not None:
+        # The dye layer a server colours: tint only its share of each pixel.
+        _apply_tint(material, runtime_tint or (1.0, 1.0, 1.0))
+        _tint_by_share(material, share)
+        material[TINT_ATTRIBUTE] = min(runtime)
+    mesh_obj.data.materials.append(material)
     mesh_obj["mcbedrock_asset_type"] = "java_model"
     mesh_obj["mcbedrock_identifier"] = model_id
     mesh_obj["mcbedrock_source_path"] = filepath
@@ -339,9 +384,11 @@ def build_java_model_from_file(context, filepath, interpolation="Closest", displ
     faces = []
     loop_uvs = []
     material_keys = []
+    face_tints = []
     resolved_textures = {}
     tint_colors = _model_tints(model_id, pack_root)
     block_tint = _block_tint_fallback(model_id)
+    runtime_tints = server_tinted_indices(model_id, pack_root)
 
     to_blender = java_to_mirrored_blender_point if mirrored else java_to_blender_point
 
@@ -410,7 +457,12 @@ def build_java_model_from_file(context, filepath, interpolation="Closest", displ
                     if tint_index < len(tint_colors) and tint_colors[tint_index]
                     else block_tint
                 )
-            material_keys.append((resolved_textures[texture_ref], tuple(tint) if tint else None))
+            # A slot the server colours at runtime gets its own material even
+            # without a known colour, so Posterize can tint just those faces.
+            runtime = tint_index >= 0 and (runtime_tints is None or tint_index in runtime_tints)
+            material_keys.append((resolved_textures[texture_ref], tuple(tint) if tint else None,
+                                  tint_index if runtime else -1))
+            face_tints.append(tint_index if runtime else -1)
 
     if not verts or not faces:
         raise ValueError("Java model did not contain importable faces")
@@ -433,19 +485,25 @@ def build_java_model_from_file(context, filepath, interpolation="Closest", displ
 
     # One material per (texture, tint): tinted overlays such as grass sides
     # must not recolour the untinted faces that share their texture.
-    unique_keys = list(dict.fromkeys(material_keys)) or [("", None)]
-    for path, tint in unique_keys:
+    unique_keys = list(dict.fromkeys(material_keys)) or [("", None, -1)]
+    for path, tint, runtime in unique_keys:
         mat_name = os.path.splitext(os.path.basename(path))[0] if path else name
-        if tint:
+        if tint or runtime >= 0:
             mat_name = f"{mat_name}_tinted"
         material = _make_java_material(mat_name, path, context, interpolation=interpolation)
-        if tint and path:
-            _apply_tint(material, tint)
+        if path and (tint or runtime >= 0):
+            _apply_tint(material, tint or (1.0, 1.0, 1.0))
+        if runtime >= 0:
+            material[TINT_ATTRIBUTE] = runtime
         mesh_obj.data.materials.append(material)
     slots = {key: index for index, key in enumerate(unique_keys)}
     for idx, poly in enumerate(mesh_obj.data.polygons):
-        key = material_keys[idx] if idx < len(material_keys) else ("", None)
+        key = material_keys[idx] if idx < len(material_keys) else ("", None, -1)
         poly.material_index = slots.get(key, 0)
+    if any(index >= 0 for index in face_tints):
+        # Which faces a server colours at runtime (Posterize's Server tint).
+        attribute = mesh_obj.data.attributes.new(TINT_ATTRIBUTE, "INT", "FACE")
+        attribute.data.foreach_set("value", face_tints)
 
     mesh_obj["mcbedrock_asset_type"] = "java_model"
     mesh_obj["mcbedrock_identifier"] = model_id

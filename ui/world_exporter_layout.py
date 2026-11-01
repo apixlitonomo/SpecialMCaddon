@@ -177,7 +177,7 @@ def pack_entries(scene,query='',state=None):
     discovered=scene.mcbedrock_discovered_packs
     query=query.strip()
     signature=(tuple(p.source_path or p.path for p in active),len(discovered),
-               scene.get('_mcbedrock_pack_scan_revision',0),query,packs.favorites_revision())
+               scene.get('_mcbedrock_pack_scan_revision',0),query)
     cached=getattr(state,'pack_entry_cache',None) if state is not None else None
     if cached and cached[0]==signature:return cached[1]
     library={packs._normalized_path(p.path):i for i,p in enumerate(discovered)}
@@ -186,8 +186,7 @@ def pack_entries(scene,query='',state=None):
         key=packs._normalized_path(p.source_path or p.path)
         seen.add(key)
         if packs._pack_matches_search(p,query):entries.append((key,i,library.get(key,-1)))
-    # The stack keeps its priority order; favourites lead the rest of the library.
-    for i,p in packs.favorites_first(list(enumerate(discovered))):
+    for i,p in enumerate(discovered):
         key=packs._normalized_path(p.path)
         if key in seen:continue
         seen.add(key)
@@ -218,7 +217,8 @@ def area_rows(settings,state,add,scene):
         add(('button','Mark an area at the map center',('reset_selection',)))
         return
     add(('bounds_head',))
-    for axis in 'xzy':add(('bounds',axis.upper(),'min_'+axis,'max_'+axis))
+    # X, Y, Z: Minecraft's own order, so Tab runs Min X, Max X, Min Y, Max Y, Min Z, Max Z.
+    for axis in 'xyz':add(('bounds',axis.upper(),'min_'+axis,'max_'+axis))
     excluding=state.mode=='EXCLUDE'
     add(('pair',('Done excluding' if excluding else 'Exclude chunks',('mode','BOX' if excluding else 'EXCLUDE')),
          ('Clear area',('clear_selection',))))
@@ -282,10 +282,10 @@ def region_rows(settings,state,add,scene):
 
 def placement_rows(settings,state,add,scene):
     add(('toggle','Center at the origin','center'))
-    # Centered exports place X and Z themselves; Y always uses its offset.
+    # Centered exports place X and Z themselves; Y always uses its offset. X, Y, Z order, as in Minecraft.
     auto=settings.center
-    add(('axes',('X','offset_x',auto),('Z','offset_z',auto)))
-    add(('axes',('Y','offset_y',False),None))
+    add(('axes',('X','offset_x',auto),('Y','offset_y',False)))
+    add(('axes',('Z','offset_z',auto),None))
     add(('field','Chunk size','chunk_size'))
 
 
@@ -634,10 +634,6 @@ def draw_pack_card(paint,state,rect,key,item,active):
     switch=Rect(rect.right-12-36,rect.y+(rect.height-20)/2,36,20)
     x=thumb.right+12
     room=max(0,switch.x-12-x)
-    from .pack_manager import is_favorite
-    if is_favorite(item.path) and room>40:
-        paint.icon(Rect(switch.x-24,rect.y,12,rect.height),'star-fill',T.accent_hover,12)
-        room-=18
     edition_tag(r,x,rect.top-29,_edition_label(item.kind),room)
     name=item.name or Path(item.path).name
     r.text(Rect(x,rect.top-50,room,16),fit_text(r,name,room,13,'SemiBold'),T.text,size=13,weight='SemiBold')

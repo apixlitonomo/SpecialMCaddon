@@ -15,6 +15,7 @@ properties from Vanilla.
 Pure Python - no ``bpy`` - so it can be exercised outside Blender.
 """
 
+import glob
 import os
 
 try:
@@ -202,10 +203,16 @@ def texture_slot_reference(value):
 
 
 def _resolve_texture_reference(texture_ref, textures):
-    """Follow Java ``#alias`` references in a merged model texture table."""
+    """Follow Java ``#alias`` references in a merged model texture table.
+
+    A face may name its slot without the ``#`` (``"texture": "0"``); the
+    game reads that as the same slot.
+    """
     reference = texture_slot_reference(texture_ref)
     seen = set()
     textures = textures if isinstance(textures, dict) else {}
+    if reference and not reference.startswith("#") and reference in textures:
+        reference = "#" + reference
     while reference.startswith("#"):
         key = reference[1:]
         if key in seen:
@@ -227,13 +234,54 @@ def resolve_model_path(pack_roots, model_ref,
 
 def resolve_texture_path(pack_roots, texture_ref, textures=None,
                          default_namespace=DEFAULT_NAMESPACE):
-    """First texture supplied by the stack after resolving model aliases."""
+    """First texture supplied by the stack after resolving model aliases.
+
+    A sprite name an atlas gives to another texture (``"type": "single"``
+    with ``"sprite"``, as Origin Realms' ``block_as_item/...``) resolves to
+    that texture.
+    """
     reference = _resolve_texture_reference(texture_ref, textures)
     if not reference:
         return ""
-    return resolve_resource_path(
-        pack_roots, "texture", reference, default_namespace
-    )
+    found = resolve_resource_path(pack_roots, "texture", reference, default_namespace)
+    if found:
+        return found
+    namespace, _, path = reference.partition(":") if ":" in reference else (default_namespace, "", reference)
+    renamed = atlas_sprites(pack_roots).get(f"{namespace.lower()}:{path.lower()}")
+    if renamed:
+        return resolve_resource_path(pack_roots, "texture", renamed, default_namespace)
+    return ""
+
+
+_ATLAS_SPRITES = {}
+
+
+def atlas_sprites(pack_roots):
+    """``sprite name -> texture`` for atlas sources that rename a texture,
+    read from every root and its version overlay folders."""
+    roots = tuple(str(root) for root in as_roots(pack_roots) if root)
+    cached = _ATLAS_SPRITES.get(roots)
+    if cached is not None:
+        return cached
+    sprites = {}
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        folders = [root] + [os.path.join(root, name) for name in sorted(os.listdir(root))
+                            if os.path.isdir(os.path.join(root, name, "assets"))]
+        for folder in folders:
+            for path in glob.glob(os.path.join(folder, "assets", "*", "atlases", "*.json")):
+                try:
+                    sources = load_json_file(path).get("sources", [])
+                except Exception:  # noqa: BLE001 - a broken atlas must not stop imports
+                    continue
+                for source in sources if isinstance(sources, list) else ():
+                    if (isinstance(source, dict) and str(source.get("type", "")).split(":")[-1] == "single"
+                            and isinstance(source.get("sprite"), str) and isinstance(source.get("resource"), str)):
+                        sprite = source["sprite"] if ":" in source["sprite"] else "minecraft:" + source["sprite"]
+                        sprites.setdefault(sprite.lower(), source["resource"])
+    _ATLAS_SPRITES[roots] = sprites
+    return sprites
 
 
 class ResourcePackVFS:

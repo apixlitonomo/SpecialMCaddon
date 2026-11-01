@@ -50,6 +50,9 @@ class State:
         self.map_pages = set()
         self.worlds_scanned = False
         self.world_bounds = None
+        # Set when a world opens: if the origin turns out empty (a downloaded server
+        # world rarely includes it), the map moves once to the player or the world.
+        self.find_terrain = False
         self.epoch = 0
         self.loaded = False
         self.ui_ready = False
@@ -141,10 +144,14 @@ class State:
         # The 3D preview of the selected area and its Flat | 3D switch at the map's top-left.
         self.preview = Preview()
         self.preview_button = Rect(0,0,0,0)
+        # Its Max Y and Min Y handles as drawn last frame: (prop, point, anchor).
+        self.y_handles = []
         # The last action's confirmation, or why it did nothing, shown above Import.
         self.message = ''
         self.message_warning = False
         self.message_status = None
+        # The message saying Java and Bedrock packs can't be mixed, while it shows.
+        self.pack_message = ''
         # The tooltip under the pointer, since when, and whether it is drawn.
         self.tip_text = None
         self.tip_since = 0.0
@@ -201,7 +208,7 @@ def _release_timers():
 # window on this tab): layout, hit targets, renderer caches and the pointer.
 AREA_FIELDS={'size':lambda:(0,0),'renderer':lambda:None,'map_rect':lambda:Rect(250,46,800,700),'targets':list,'tips':list,
     'overlay_rects':list,'inspector_rect':lambda:Rect(0,0,0,0),'toolbar_rect':lambda:Rect(0,0,0,0),
-    'island_rect':lambda:Rect(0,0,0,0),'menu_rect':lambda:Rect(0,0,0,0),'preview_button':lambda:Rect(0,0,0,0),
+    'island_rect':lambda:Rect(0,0,0,0),'menu_rect':lambda:Rect(0,0,0,0),'preview_button':lambda:Rect(0,0,0,0),'y_handles':list,
     'anchors':dict,'pack_cards':list,'pack_list_rect':lambda:Rect(0,0,0,0),'pack_list_top':float,
     'pack_list_listed':float,'pack_resize_rect':lambda:Rect(0,0,0,0),'scroll_max':lambda:{'right':0,'packs':0},
     'world_picker_box':lambda:None,'menu_visible_count':lambda:4,'hover':lambda:(0,0),'tip_text':lambda:None,
@@ -309,6 +316,7 @@ def world_loaded(scene, info):
         # position and the outer region-file bounds. Refreshes keep navigation.
         s.view.x=s.view.z=0
         s.view.scale=min(48,max(4.0,s.map_rect.width/256,s.map_rect.height/256))
+        s.find_terrain=True
 
 
 def receive_tiles(scene, job, rows):
@@ -336,6 +344,14 @@ def receive_tiles(scene, job, rows):
     s.tile_revision+=1
     remaining = sum(key not in s.tiles for key in s.visible())
     settings=scene.mcbedrock_world_exporter
+    if s.find_terrain and not remaining:
+        s.find_terrain=False
+        if not any(s.tiles.get(key) for key in s.visible()):
+            here=[p for p in settings.players if p.dimension==settings.dimension]
+            if here:
+                s.view.x,s.view.z=here[0].x,here[0].z
+            elif s.world_bounds:
+                s.view.x=(s.world_bounds[0]+s.world_bounds[2])/2;s.view.z=(s.world_bounds[1]+s.world_bounds[3])/2
     # Background map arrivals must not erase the result of an explicit operation.
     if not settings.status.startswith(('Imported','Export','Failed','Import failed','Cancelled','Generated')):
         settings.status = (f'Loading map · {remaining} visible chunks remaining' if remaining
@@ -361,6 +377,12 @@ def tick(context, s):
     settings = context.scene.mcbedrock_world_exporter
     current = signature(settings)
     if s.signature != current:
+        # Packs mixed elsewhere (the sidebar, a preset) are said here; fixing them takes it back.
+        if s.signature is None or s.signature[4] != current[4]:
+            from .world_exporter_packs import mixed
+            why = mixed(context.scene)
+            if why:tell_packs(s, why)
+            elif s.message and s.message == s.pack_message:tell(s, '')
         changed_world = s.signature is None or s.signature[0] != current[0]
         if s.loaded and not changed_world and s.signature[:4] == current[:4] and s.loaded_stack is not None:
             # Packs are often switched several in a row: each switch reloaded the
@@ -451,6 +473,9 @@ def cached_json(s,text):
 def export_reason(settings,s):
     if not s.loaded:return 'Load a world to begin'
     if not s.ui_ready:return 'Wait for the map to load'
+    from .world_exporter_packs import mixed
+    why=mixed(settings.id_data)
+    if why:return why
     if not s.has_selection:return 'Select an area on the map'
     for axis in 'xyz':
         if getattr(settings,'min_'+axis)>getattr(settings,'max_'+axis):return f'Minimum {axis.upper()} must not exceed maximum {axis.upper()}'
@@ -730,7 +755,7 @@ def draw_canvas():
     r=s.renderer;r.ui_scale=s.scale;r.linear_output=True;r.cap_center_default=True
     r.begin()
     try:
-        s.targets=[];s.tips=[]
+        s.targets=[];s.tips=[];s.y_handles=[]
         paint=Painter(r,s)
         from .world_exporter_view import render
         render(context,s,paint,draw_map)
@@ -775,8 +800,12 @@ def draw_tooltip(paint,s):
 
 def hover_redraw(s):
     """Passive motion redraws only when the control under the pointer changes
-    (buttons and options lift) or a tooltip changes or shows (it follows the pointer)."""
+    (buttons and options lift, a 3D Y handle grows) or a tooltip changes or shows (it follows the pointer)."""
     control=next((action for rect,action in reversed(s.targets) if rect.contains(*s.hover)),None)
+    if control is None and s.y_handles:
+        from .world_exporter_preview import handle_at
+        handle=handle_at(s,*s.hover)
+        if handle:control=('y_handle',handle[0])
     moved_on=control!=getattr(s,'hover_target',None)
     s.hover_target=control
     if s.menu:return moved_on
@@ -916,7 +945,8 @@ def selection_chunks(settings):
 
 
 def draw_size_label(paint,settings,s,selection,rect):
-    """Selection size as plain white text riding above its top-left corner, live while dragging."""
+    """Selection size as plain white text riding above its top-left corner, live while dragging.
+    Sizes read X × Y × Z, Minecraft's order; without a Y range only the X × Z footprint shows."""
     r=paint.r
     width=settings.max_x-settings.min_x+1;depth=settings.max_z-settings.min_z+1;height=settings.max_y-settings.min_y+1
     flipped=next((axis.upper() for axis in 'xyz' if getattr(settings,'min_'+axis)>getattr(settings,'max_'+axis)),None)
@@ -925,7 +955,7 @@ def draw_size_label(paint,settings,s,selection,rect):
     narrowed=(settings.min_y,settings.max_y)!=(-64,319)
     text=(f'Min {flipped} is greater than max {flipped}. Swap the values.' if flipped else
           f'Y {settings.min_y} to {settings.max_y} · {height:,} blocks tall' if height_hint else
-          f'{width:,} × {depth:,} × {height:,} blocks' if narrowed else
+          f'{width:,} × {height:,} × {depth:,} blocks' if narrowed else
           f'{width:,} × {depth:,} blocks')
     measured=r.text_width(text,12,'SemiBold') if hasattr(r,'text_width') else None
     label_width=(measured if isinstance(measured,(int,float)) else len(text)*6.6)+(16 if flipped else 2)
@@ -961,19 +991,11 @@ def menu_items(context,s):
         return [(item.name,('water_preset',item.identifier))
                 for item in settings.bl_rna.properties['water_preset'].enum_items]
     if s.menu=='pack actions':
-        from .pack_manager import is_favorite
         packs=context.scene.mcbedrock_active_packs
         index=next((i for i,p in enumerate(packs) if p.path==getattr(s,'context_pack',None)),-1)
-        key=getattr(s,'context_pack_key',None)
-        rows=[]
-        if index>=0:
-            rows=[(label,('stack',s.context_pack,target)) for label,target in
-                  [('Move up',index-1),('Move down',index+1),('Move to top',0)] if 0<=target<len(packs) and target!=index]+[('Remove from active stack',('stack_remove',s.context_pack))]
-        if key:
-            favorite=is_favorite(key)
-            rows.append(('Remove from favorites' if favorite else 'Add to favorites',('pack_favorite',key,not favorite),
-                         dict(divider=True) if rows else {}))
-        return rows
+        if index<0:return []
+        return [(label,('stack',s.context_pack,target)) for label,target in
+                [('Move up',index-1),('Move down',index+1),('Move to top',0)] if 0<=target<len(packs) and target!=index]+[('Remove from active stack',('stack_remove',s.context_pack))]
     if s.menu=='preview actions':
         from .world_exporter_preview import menu_items as preview_items
         return preview_items(s)
@@ -1245,7 +1267,9 @@ def action(context,s,cmd):
     elif kind=='engine_set':settings.engine=cmd[1]
     elif kind=='whitewater_set':settings.whitewater_style=cmd[1]
     elif kind=='water_preset':settings.water_preset=cmd[1];s.menu=None
-    elif kind in {'pack_toggle','pack_card'}:toggle_pack(context,cmd[1])
+    elif kind in {'pack_toggle','pack_card'}:
+        why=toggle_pack(context,cmd[1])
+        if why:tell_packs(s,why)
     elif kind=='pack_search':
         s.pack_search_focused=True;s.pack_search_select_all=False;s.pack_search_blink=time.monotonic()
     elif kind=='pack_group':
@@ -1275,7 +1299,6 @@ def action(context,s,cmd):
         workspace=next((w for w in bpy.data.workspaces if w.name=='Layout'),None)
         if workspace is None:workspace=next((w for w in bpy.data.workspaces if not w.get(KEY)),None)
         if workspace:context.window.workspace=workspace
-    elif kind=='pack_favorite':bpy.ops.mcbedrock.favorite_pack('EXEC_DEFAULT',filepath=cmd[1],favorite=cmd[2])
     elif kind in {'stack','stack_remove'}:
         packs=context.scene.mcbedrock_active_packs
         index=next((i for i,p in enumerate(packs) if p.path==cmd[1]),-1)
@@ -1287,7 +1310,11 @@ def action(context,s,cmd):
     elif kind=='advanced':s.advanced=not s.advanced
     elif kind=='tools':s.tools=not s.tools
     elif kind=='pause':s.paused=not s.paused
-    elif kind=='reload':invalidate(context.scene);s.pending='LOAD'
+    elif kind=='reload':
+        from .world_exporter_packs import mixed
+        why=mixed(context.scene)
+        if why:tell_packs(s,why)
+        else:invalidate(context.scene);s.pending='LOAD'
     elif kind=='reopen_world':s.pending='LOAD';s.menu=None
     elif kind=='output_mode':
         if cmd[1]=='BLEND':
@@ -1325,9 +1352,10 @@ def tuple_rect(rect):return rect.x,rect.y,rect.width,rect.height
 
 
 def toggle_pack(context,key):
-    """Switch a pack on (bottom of the shared stack) or off, by its normalized source path."""
+    """Switch a pack on (bottom of the shared stack) or off, by its normalized source path.
+    Returns why it stayed off (Java and Bedrock packs never go to MiEx together), or ''."""
     from .pack_manager import _normalized_path
-    from .world_exporter_packs import sync_mirror
+    from .world_exporter_packs import sync_mirror,refusal
     scene=context.scene
     active=next((i for i,p in enumerate(scene.mcbedrock_active_packs) if _normalized_path(p.source_path or p.path)==key),-1)
     if active>=0:
@@ -1335,9 +1363,17 @@ def toggle_pack(context,key):
         bpy.ops.mcbedrock.remove_active_pack('EXEC_DEFAULT')
     else:
         index=next((i for i,p in enumerate(scene.mcbedrock_discovered_packs) if _normalized_path(p.path)==key),-1)
-        if index<0:return
+        if index<0:return ''
+        why=refusal(scene,scene.mcbedrock_discovered_packs[index])
+        if why:return why
         bpy.ops.mcbedrock.add_resource_pack_to_active('EXEC_DEFAULT',pack_index=index)
     sync_mirror(scene)
+    return ''
+
+
+def tell_packs(s,why):
+    """Say why packs can't be used together; the next pack change takes it back."""
+    tell(s,why,True);s.pack_message=why
 
 
 def map_select(settings,s,start,end):
@@ -1386,7 +1422,8 @@ def press_control(context,s,cmd,x):
 
 
 def cancel_number_drag(settings,s):
-    if s.drag and s.drag[0]=='number':
+    """A field scrub or a 3D Y handle drag puts its value back."""
+    if s.drag and s.drag[0] in {'number','y_handle'}:
         restore_selection(settings,s.drag_snapshot)
         s.drag=None;s.drag_snapshot=None;s.drag_button=None
 
@@ -1448,6 +1485,10 @@ def handle_event(context,s,event):
     if s.drag and s.drag[0]=='number':
         number_drag_event(context,s,event,x);return
     update_resize_cursor(context,s,x,y)
+    if s.drag and s.drag[0]=='y_handle':
+        # A 3D Y handle drag takes every event until it ends, like a field scrub.
+        from .world_exporter_preview import drag_event
+        drag_event(context,s,event,x,y);update_resize_cursor(context,s,x,y);return
     if s.drag and s.drag[0]=='pack':
         pack_drag_event(context,s,event,y);return
     if s.drag and s.drag[0]=='pack_resize':
@@ -1464,8 +1505,7 @@ def handle_event(context,s,event):
     if event.type=='RIGHTMOUSE' and event.value=='PRESS' and s.ui_ready and not s.menu and s.inspector_open and not s.drag:
         card=pack_card_at(s,x,y)
         if card is not None:
-            s.context_pack,s.context_pack_key=card[2],card[1]
-            action(context,s,('menu','pack actions'))
+            if card[2]:s.context_pack=card[2];action(context,s,('menu','pack actions'))
             return
     if event.type=='ESC' and event.value=='PRESS' and s.drag:
         if s.drag_snapshot:restore_selection(settings,s.drag_snapshot)
@@ -1611,7 +1651,8 @@ def handle_event(context,s,event):
         kind,start,world,center=s.drag
         if kind in {'pan','right_pan'}:
             s.right_dragged |= max(abs(x-start[0]),abs(y-start[1]))>=4
-            if kind=='pan' or s.right_dragged:s.view.x=center[0]-(x-start[0])/s.view.scale;s.view.z=center[1]+(y-start[1])/s.view.scale
+            if kind=='pan' or s.right_dragged:
+                s.view.x=center[0]-(x-start[0])/s.view.scale;s.view.z=center[1]+(y-start[1])/s.view.scale;s.find_terrain=False
         elif kind in {'edge_x','edge_z'}:
             end=s.view.world(x,y,viewrect)
             end=tuple(v-1e-6 if v>anchor else v for v,anchor in zip(end,world))
@@ -1639,10 +1680,13 @@ def handle_event(context,s,event):
 
 
 def update_resize_cursor(context,s,x,y):
-    """Up-down arrows over the pack list's resize line and while dragging it."""
+    """Up-down arrows over the pack list's resize line and the 3D view's Y handles, and while dragging them."""
     window=getattr(context,'window',None)
     if window is None:return
-    wanted=bool(s.drag and s.drag[0]=='pack_resize') or (not s.drag and not s.menu and s.pack_resize_rect.contains(x,y))
+    if s.drag:wanted=s.drag[0] in {'pack_resize','y_handle'}
+    else:
+        from .world_exporter_preview import handle_at
+        wanted=not s.menu and (s.pack_resize_rect.contains(x,y) or handle_at(s,x,y) is not None)
     if wanted!=s.resize_cursor:
         s.resize_cursor=wanted
         try:window.cursor_set('MOVE_Y' if wanted else 'DEFAULT')
@@ -1726,7 +1770,7 @@ def update_native_status(owner,context,s=None):
         text='Drag to select, middle mouse to pan, wheel to zoom, right-click for actions'
         if s.preview.on:
             from .world_exporter_preview import status_text
-            text=status_text()
+            text=status_text(s)
         elif s.mode in {'EXCLUDE','FOREGROUND'}:
             text=('Drag to exclude chunks' if s.mode=='EXCLUDE' else 'Click foreground groups')+'. Esc to finish'
         if s.drag and s.drag[0]=='number':text='Drag to adjust, hold Shift for precision, Esc or right-click to cancel'
@@ -1946,7 +1990,10 @@ class MCBEDROCK_OT_world_browse(bpy.types.Operator):
             elif self.target=='pack':
                 if path.name in {'pack.mcmeta','manifest.json'}:path=path.parent
                 from .world_exporter_packs import add_source
-                add_source(context,str(path))
+                why=add_source(context,str(path))
+                if why:
+                    tell_packs(state(context.scene),why)
+                    self.report({'WARNING'},why);return {'CANCELLED'}
             else:
                 if path.is_file():path=path.parent
                 setattr(settings,self.target,str(path))

@@ -25,6 +25,45 @@ def session_for(context):
                  and getattr(s.region, 'active_panel_category', '') == 'Sparkle'), None)
 
 
+# A GIZMO_GT_button_2d reads its icon once, on its first draw, and keeps it
+# (button2d_gizmo.cc, `is_init`). One button whose icon followed the view kept
+# its first state: the padlock stayed open after Lock Camera to View was turned
+# on. As in Blender's own group (view3d_gizmo_navigate.cc), each state has its
+# own button, and draw_prepare shows the one that matches. Never set `icon`
+# after setup.
+BUTTONS = (  # name, operator, icon
+    ('zoom', 'view3d.zoom', 'VIEW_ZOOM'),
+    ('move', 'view3d.move', 'VIEW_PAN'),
+    ('camera_off', 'view3d.view_camera', 'VIEW_CAMERA_UNSELECTED'),
+    ('camera_on', 'view3d.view_camera', 'VIEW_CAMERA'),
+    ('persp', 'view3d.view_persportho', 'VIEW_PERSPECTIVE'),
+    ('ortho', 'view3d.view_persportho', 'VIEW_ORTHO'),
+    ('lock', 'wm.context_toggle', 'VIEW_LOCKED'),
+    ('unlock', 'wm.context_toggle', 'VIEW_UNLOCKED'),
+)
+_DRAG = {'zoom', 'move'}
+
+
+def shown_buttons(show_navigate, camera, perspective, lock_camera, lock_rotation=False):
+    """The buttons Blender's navigation group shows, top to bottom.
+
+    Mirrors WIDGETGROUP_navigate_draw_prepare: Preferences > Navigation
+    Controls shows them; a camera view swaps Perspective/Orthographic for the
+    Lock Camera to View padlock; a rotation-locked view has no camera or
+    projection button. (Python cannot read the zoom and location locks.)
+    """
+    if not show_navigate:
+        return ()
+    shown = ['zoom', 'move']
+    if not lock_rotation:
+        shown.append('camera_on' if camera else 'camera_off')
+        if not camera:
+            shown.append('persp' if perspective else 'ortho')
+    if camera:
+        shown.append('lock' if lock_camera else 'unlock')
+    return tuple(shown)
+
+
 class MCBEDROCK_GGT_panel_navigation(bpy.types.GizmoGroup):
     bl_idname = 'MCBEDROCK_GGT_panel_navigation'
     bl_label = 'Sparkle Viewport Navigation'
@@ -37,13 +76,9 @@ class MCBEDROCK_GGT_panel_navigation(bpy.types.GizmoGroup):
         return context.space_data.show_gizmo and session_for(context) is not None
 
     def setup(self, context):
-        self.buttons = []
-        for operator, icon, drag in (
-                ('view3d.zoom', 'VIEW_ZOOM', True),
-                ('view3d.move', 'VIEW_PAN', True),
-                ('view3d.view_camera', 'VIEW_CAMERA_UNSELECTED', False),
-                ('view3d.view_persportho', 'VIEW_ORTHO', False),
-                ('wm.context_toggle', 'VIEW_UNLOCKED', False)):
+        self.buttons = {}
+        for name, operator, icon in BUTTONS:
+            drag = name in _DRAG
             gz = self.gizmos.new('GIZMO_GT_button_2d')
             props = gz.target_set_operator(operator)
             if operator == 'wm.context_toggle':
@@ -60,7 +95,8 @@ class MCBEDROCK_GGT_panel_navigation(bpy.types.GizmoGroup):
             gz.color_highlight = (.5, .5, .5)
             gz.alpha_highlight = .5
             gz.scale_basis = 14
-            self.buttons.append(gz)
+            gz.hide = True
+            self.buttons[name] = gz
 
     def draw_prepare(self, context):
         session = session_for(context)
@@ -73,16 +109,14 @@ class MCBEDROCK_GGT_panel_navigation(bpy.types.GizmoGroup):
         top = session.region.y - context.region.y + session.region.height
         show_axis = context.preferences.view.mini_axis_type == 'GIZMO'
         first_y = top - (size + 30 if show_axis else 24) * scale
-        for i, gz in enumerate(self.buttons):
-            gz.matrix_basis.translation = (edge - 26 * scale, first_y - i * 30 * scale, 0)
-            gz.hide = not context.preferences.view.show_gizmo
-        camera = context.region_data.view_perspective == 'CAMERA'
-        self.buttons[2].icon = 'VIEW_CAMERA' if camera else 'VIEW_CAMERA_UNSELECTED'
-        self.buttons[3].hide |= camera
-        self.buttons[4].hide |= not camera
-        self.buttons[4].matrix_basis.translation = self.buttons[3].matrix_basis.translation
-        self.buttons[4].icon = 'VIEW_LOCKED' if context.space_data.lock_camera else 'VIEW_UNLOCKED'
-        self.buttons[3].icon = 'VIEW_PERSPECTIVE' if context.region_data.is_perspective else 'VIEW_ORTHO'
+        view = context.region_data
+        shown = shown_buttons(context.preferences.view.show_navigate_ui,
+                              view.view_perspective == 'CAMERA', view.is_perspective,
+                              context.space_data.lock_camera, view.lock_rotation)
+        for name, gz in self.buttons.items():
+            gz.hide = name not in shown
+        for slot, name in enumerate(shown):
+            self.buttons[name].matrix_basis.translation = (edge - 26 * scale, first_y - slot * 30 * scale, 0)
 
 
 class MCBEDROCK_GGT_panel_orbit(bpy.types.GizmoGroup):

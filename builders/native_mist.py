@@ -3,7 +3,7 @@ import json
 
 
 def coverage(scene, material):
-    from .lighting_pipeline import pass_name
+    from .lighting_pipeline import linked_from, pass_name
     tree = material.node_tree
     if tree is None:
         return
@@ -19,12 +19,13 @@ def coverage(scene, material):
     shaders = [n for n in tree.nodes if n.type == 'BSDF_PRINCIPLED']
     alpha = shaders[0].inputs['Alpha'] if len(shaders) == 1 else None
     target = node.inputs['Value']
-    source = alpha.links[0].from_socket if alpha and alpha.links else None
+    source = linked_from(alpha)
     if source:
-        if not target.links or target.links[0].from_socket != source:
+        if linked_from(target) != source:
             tree.links.new(source, target)
     else:
-        for link in list(target.links): tree.links.remove(link)
+        if target.is_linked:
+            for link in list(target.links): tree.links.remove(link)
         value = alpha.default_value if alpha else 1.
         if target.default_value != value: target.default_value = value
 

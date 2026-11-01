@@ -1,12 +1,15 @@
-"""Posterize session, worker ownership, and reversible Blender assignments."""
+"""Posterize session: the source, its conversion and reversible model previews.
+
+Conversion runs in-process on a background thread (NumPy only, no bpy), so
+the interface keeps drawing while a large texture converts. Model previews
+are tagged material copies, so they are found and removed even after an
+Undo or a reopened file brought them back.
+"""
 import json
 import os
 from pathlib import Path
-import re
-import shutil
 import struct
-import subprocess
-import tempfile
+import threading
 import time
 import uuid
 import zlib
@@ -18,13 +21,11 @@ import numpy as np
 
 SESSION = None
 ENABLED = False
-# Results show within a tenth of a second while a job is out; otherwise the
-# timer only keeps the worker's heartbeat and notices scene switches.
-POLL_BUSY = .1
+POLL_BUSY = .05
 POLL_IDLE = 1.
-HEARTBEAT = 1.  # seconds between heartbeats; the worker gives up after 120
-_RESULT_FILE = re.compile(r'result-(\d+)\.npz')
-_MASK_FILE = re.compile(r'mask-(\d+)\.npy')
+DEBOUNCE = .06
+PREVIEW = 'mcbedrock_posterize_preview'  # on preview copies: the original material's name
+APPLIED = 'mcbedrock_posterized'         # on materials and images Apply made
 
 
 def redraw():
@@ -76,30 +77,26 @@ def changed(self, context):
 
 
 def wake():
-    """Check for work soon: a new job goes out after its short debounce even
-    while the idle timer is slow."""
+    """Check for work soon, even while the idle timer is slow."""
     if not ENABLED:
         return
     if bpy.app.timers.is_registered(tick):
         bpy.app.timers.unregister(tick)
-    bpy.app.timers.register(tick, first_interval=.05)
+    bpy.app.timers.register(tick, first_interval=.02)
 
 
 def preview_changed(self, context):
     if SESSION:
         try:
-            SESSION.restore()
-            if self.live and not self.original and SESSION.ready:
-                SESSION.preview()
+            SESSION.refresh_preview()
         except (ValueError, ReferenceError, RuntimeError) as exc:
             SESSION.status = str(exc)
     redraw()
 
 
 def target_changed(self, context):
-    if SESSION:
-        SESSION.restore()
-    redraw()
+    load_tint(self)
+    preview_changed(self, context)
 
 
 def model_root(obj):
@@ -148,72 +145,108 @@ def same_texture(left, right):
             Path(bpy.path.abspath(right.filepath,library=right.library)).resolve())
 
 
-RANGE_FIELDS = ('label','enabled','hue_min','hue_max','sat_min','sat_max',
-                'value_min','value_max','shades','preserve','separate_muted')
+def srgb_to_linear(color):
+    return tuple(c/12.92 if c <= .04045 else ((c+.055)/1.055)**2.4 for c in color[:3])
 
 
-def range_properties(update=None):
-    callbacks = dict(update=update) if update else {}
-    result = dict(label=bpy.props.StringProperty(name='Group name',default='Custom range',**callbacks),
-                  enabled=bpy.props.BoolProperty(name='Enabled',default=True,**callbacks),
-                  shades=bpy.props.IntProperty(name='Shades (0 = slider)',default=0,min=0,max=256,**callbacks),
-                  preserve=bpy.props.BoolProperty(name='Keep original pixels',default=False,**callbacks),
-                  separate_muted=bpy.props.BoolProperty(name='Separate muted shades',default=False,**callbacks))
-    for key,label,default,maximum in (
-        ('hue_min','Hue start',0,360),('hue_max','Hue end',360,360),
-        ('sat_min','Saturation min %',0,100),('sat_max','Saturation max %',100,100),
-        ('value_min','Brightness min %',0,100),('value_max','Brightness max %',100,100)):
-        result[key] = bpy.props.FloatProperty(name=label,default=default,min=0,max=maximum,**callbacks)
-    return result
+def linear_to_srgb(color):
+    return tuple(c*12.92 if c <= .0031308 else 1.055*c**(1/2.4)-.055 for c in color[:3])
 
 
-class PosterizeRange(bpy.types.PropertyGroup):
-    __annotations__ = range_properties(changed)
+def tint_sockets(scene, obj):
+    """Tint colour inputs of every material (and live preview copy) on ``obj``'s
+    model whose faces a server colours at runtime. Java models imported by
+    Sparkle mark those materials; others have none."""
+    from ..builders.java_builder import TINT_ATTRIBUTE
+    from ..builders.java_materials import tint_socket
+    sockets, seen = [], set()
+    for mesh_obj in model_meshes(scene, obj) if obj else ():
+        for slot in mesh_obj.material_slots:
+            for material in (slot.material, original_material(slot.material)):
+                if material is None or material.name in seen or material.get(TINT_ATTRIBUTE) is None:
+                    continue
+                seen.add(material.name)
+                socket = tint_socket(material)
+                if socket is not None:
+                    sockets.append(socket)
+    return sockets
 
 
-def range_configuration(s):
-    return [dict(name=group.label,**{key:getattr(group,key) for key in RANGE_FIELDS if key!='label'}) for group in s.ranges]
+_SYNCING = False
 
 
-def reset_ranges(s):
-    from ..builders.posterize import DEFAULT_GROUPS
-    s.ranges.clear()
-    for config in DEFAULT_GROUPS:
-        group = s.ranges.add()
-        for key,value in config.items():
-            setattr(group,'label' if key=='name' else key,value)
-        group.name = group.label
-    s.ranges_initialized = True
-    s.range_index = 0
-    if SESSION:
-        SESSION.request()
+def tint_changed(self, context):
+    """Colour the model's server-tinted parts, as the game multiplies a tint."""
+    if _SYNCING or not self.target:
+        return
+    color = (*srgb_to_linear(self.tint_color), 1.)
+    for socket in tint_sockets(context.scene, self.target):
+        socket.default_value = color
+    redraw()
+
+
+def load_tint(s):
+    """Show the target model's current server tint in the picker."""
+    global _SYNCING
+    sockets = tint_sockets(bpy.context.scene, s.target) if s.target else []
+    if sockets:
+        _SYNCING = True
+        try:
+            s.tint_color = linear_to_srgb(sockets[0].default_value)
+        finally:
+            _SYNCING = False
 
 
 class PosterizeSettings(bpy.types.PropertyGroup):
-    lock_groups: bpy.props.BoolProperty(name='Lock Color Ranges',default=True,update=changed)
-    advanced_ranges: bpy.props.BoolProperty(name='Advanced Color Ranges',default=False)
-    highlight_range: bpy.props.BoolProperty(name='Highlight Selected Range',default=False)
-    ranges_initialized: bpy.props.BoolProperty(default=False)
-    ranges: bpy.props.CollectionProperty(type=PosterizeRange)
-    range_index: bpy.props.IntProperty(default=0,min=0)
-    strength: bpy.props.IntProperty(name='Posterization', default=50, min=0, max=100, update=changed)
-    cleanup: bpy.props.IntProperty(name='Detail Cleanup', default=0, min=0, max=100, update=changed)
-    tileable: bpy.props.BoolProperty(name='Tileable', default=False, update=changed)
-    live: bpy.props.BoolProperty(name='Live Model Preview', default=False, update=preview_changed)
-    original: bpy.props.BoolProperty(name='Show Original on Model', default=False, update=preview_changed)
-    model_layers: bpy.props.BoolProperty(name='All Model Layers', default=True,
-        description='Update matching textures on child meshes and sibling layers in this model', update=preview_changed)
+    colors: bpy.props.IntProperty(name='Colors', default=0, min=0, max=64, update=changed,
+        description='How many colors the texture keeps. 0 keeps them all')
+    specks: bpy.props.IntProperty(name='Remove Specks', default=0, min=0, max=100, update=changed,
+        description='Replace lone pixels with the color around them')
+    tileable: bpy.props.BoolProperty(name='Seamless Edges', default=False, update=changed,
+        description='Treat opposite edges as touching, for textures that tile')
+    recolor: bpy.props.BoolProperty(name='Recolor', default=False, update=changed,
+        description='Color part of the texture, keeping its shading, like a server tint or a Blockbench color adjust')
+    recolor_color: bpy.props.FloatVectorProperty(name='New Color', subtype='COLOR_GAMMA', size=3, min=0, max=1,
+        default=(.8, .2, .2), update=changed)
+    recolor_select: bpy.props.EnumProperty(name='Recolor', update=changed, items=[
+        ('WHITES', 'Whites and light grays', 'Every white or light gray pixel'),
+        ('PICKED', 'Picked color', 'Shades near a color picked from the texture')], default='WHITES')
+    tint_color: bpy.props.FloatVectorProperty(name='Server Tint', subtype='COLOR_GAMMA', size=3, min=0, max=1,
+        default=(1, 1, 1), update=tint_changed,
+        description='The color a server gives this model in game. Changes the model directly; Ctrl+Z undoes it')
+    recolor_pick: bpy.props.FloatVectorProperty(name='Picked Color', subtype='COLOR_GAMMA', size=3, min=0, max=1,
+        default=(1, 1, 1), update=changed)
+    recolor_tolerance: bpy.props.IntProperty(name='Tolerance', default=25, min=0, max=100, update=changed,
+        description='How far a shade may be from white or the picked color and still change')
+    recolor_mode: bpy.props.EnumProperty(name='Shading', update=changed, items=[
+        ('TINT', 'Tint like the game', 'Multiply: white becomes the color, grays become darker shades of it'),
+        ('MATCH', 'Brightest becomes the color', 'The lightest selected shade becomes exactly the color')], default='TINT')
+    live: bpy.props.BoolProperty(name='Show on Model', default=True, update=preview_changed,
+        description='Show the result on the model while editing')
+    original: bpy.props.BoolProperty(name='Show Original', default=False, update=preview_changed,
+        description='Compare: show the untouched texture on the model')
     target: bpy.props.PointerProperty(name='Object', type=bpy.types.Object, update=target_changed)
     slot: bpy.props.IntProperty(name='Material Slot', default=0, min=0, update=target_changed)
     node: bpy.props.StringProperty(name='Image Node', update=target_changed)
-    tool: bpy.props.EnumProperty(name='Preview Tool', items=[('PAN','Pan','Drag to pan both previews'),
-        ('PROTECT','Protect','Paint pixels to preserve'), ('ERASE','Erase','Erase protection'),
-        ('LOCK','Keep Color','Click a source pixel to toggle its color lock'),
-        ('GROUP','Sample Range','Click the source texture to define a color range')], default='PAN')
-    radius: bpy.props.IntProperty(name='Brush Radius (pixels)', default=1, min=1, max=64)
+    tool: bpy.props.EnumProperty(name='Tool', items=[
+        ('PAN', 'Pan', 'Drag to move both previews (middle-drag always pans)'),
+        ('PROTECT', 'Protect', 'Paint pixels that must not change'),
+        ('ERASE', 'Erase Protection', 'Remove protection'),
+        ('KEEP', 'Keep Color', 'Click a pixel to keep its color exactly'),
+        ('RECOLOR', 'Pick Recolor', 'Click the texture to choose the color to recolor')], default='PAN')
+    radius: bpy.props.IntProperty(name='Brush Size', default=1, min=1, max=64)
     zoom: bpy.props.FloatProperty(name='Zoom', default=1, min=1, max=32)
     pan_x: bpy.props.FloatProperty(default=.5, min=0, max=1)
     pan_y: bpy.props.FloatProperty(default=.5, min=0, max=1)
+
+
+DEFAULTS = ('colors', 'specks', 'tileable', 'recolor', 'recolor_color', 'recolor_select', 'recolor_pick',
+            'recolor_tolerance', 'recolor_mode', 'original', 'tool', 'radius', 'zoom', 'pan_x', 'pan_y')
+
+
+def reset_settings(s):
+    for name in DEFAULTS:
+        s.property_unset(name)
 
 
 def image_pixels(image):
@@ -307,198 +340,144 @@ def write_png(path, pixels):
         temporary.unlink(missing_ok=True)
 
 
+def drop_previews(objects=None):
+    """Put the original material back wherever a preview copy is assigned,
+    then delete unused copies. Works from the tags alone."""
+    for obj in (bpy.data.objects if objects is None else objects):
+        for slot in getattr(obj, 'material_slots', ()):
+            material = slot.material
+            original = material.get(PREVIEW) if material else None
+            if original is None:
+                continue
+            links = material.get(PREVIEW+'_link')
+            link = links.get(obj.name, 'DATA') if links else 'DATA'
+            slot.material = bpy.data.materials.get(original)
+            if slot.link != link:
+                slot.link = link
+    for material in list(bpy.data.materials):
+        if material.get(PREVIEW) is not None and material.users == 0:
+            bpy.data.materials.remove(material)
+
+
 class Session:
     def __init__(self, pixels, name, filepath, scene):
         self.source = pixels
         self.source_name = name
         self.source_path = filepath
-        self.scene = scene
-        self.directory = Path(tempfile.mkdtemp(prefix='sparkle_posterize_'))
-        self.worker = None
-        self.log = None
-        self.original_image = None
-        self.result_image = None
-        self.result = None
+        self.scene_name = scene.name
+        self.posterizer = None
         self.mask = np.zeros(self.source.shape[:2], bool)
-        self.locked = set()
+        self.mask_version = 0
+        self.kept = set()
         self.generation = 0
-        self.sent = -1
         self.received = -1
-        self.due = 0
+        self.due = 0.
         self.status = 'Preparing preview…'
         self.stats = {}
-        self.group_map = None
-        self.assignments = []
-        self.preview_materials = []
-        # Bumped when the protection mask or the result pixels change: the
-        # previews' overlay textures and the sidebar's repaint follow them.
-        self.mask_version = 0
+        self.result = None
         self.result_version = 0
         self.overlays = {}
-        self._mask_sent = None  # (file name, copy of the mask it holds)
-        self._result_stamp = None
-        self._beat = float('-inf')
-        try:
-            np.save(self.directory/'source.npy', self.source, allow_pickle=False)
-            self.original_image = make_image('Posterize Original', self.source)
-        except Exception:
-            self.close()
-            raise
+        self.original_name = make_image('Posterize Original', pixels).name
+        self.result_name = None
+        self._thread = None
+        self._done = None
         self.request()
+
+    # Images and the scene are found by name: an Undo replaces every datablock.
+    @property
+    def original_image(self):
+        return bpy.data.images.get(self.original_name)
+
+    @property
+    def result_image(self):
+        return bpy.data.images.get(self.result_name) if self.result_name else None
+
+    @property
+    def scene(self):
+        return bpy.data.scenes.get(self.scene_name)
 
     @property
     def ready(self):
         return self.result is not None and self.received == self.generation
 
     @property
-    def outstanding(self):
-        """A job went to the worker and its result has not come back."""
-        return self.sent >= 0 and self.sent != self.received
-
-    @property
     def busy(self):
-        """A job waits for its debounce or for a worker that is still running."""
-        return self.sent != self.generation or (
-            self.outstanding and self.worker is not None and self.worker.poll() is None)
+        return self.received != self.generation
 
     def request(self):
         self.generation += 1
-        self.due = time.monotonic()+.18
+        self.due = time.monotonic()+DEBOUNCE
         self.status = 'Updating preview…'
         wake()
 
     def mask_edited(self):
-        """The protection mask changed: its overlay redraws and the preview converts again."""
         self.mask_version += 1
         self.request()
 
-    def start_worker(self):
-        if self.worker and self.worker.poll() is None:
-            return
-        if self.log:
-            self.log.close()
-        self.log = (self.directory/'worker.log').open('ab')
-        script = Path(__file__).resolve().parents[1]/'importers/posterize_worker.py'
-        self.worker = subprocess.Popen([bpy.app.binary_path, '--background', '--factory-startup',
-            '--threads', '2', '--python', str(script), '--', str(self.directory)],
-            stdout=self.log, stderr=self.log,
-            creationflags=(subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS) if os.name == 'nt' else 0)
+    def job(self):
+        """Everything the conversion needs, read on the main thread."""
+        s = settings()
+        recolor = None
+        if s.recolor:
+            recolor = dict(select=s.recolor_select, pick=list(s.recolor_pick), color=list(s.recolor_color),
+                           tolerance=s.recolor_tolerance, mode=s.recolor_mode)
+        return dict(generation=self.generation, colors=s.colors, specks=s.specks, tileable=s.tileable,
+                    kept=sorted(self.kept), mask=self.mask.copy(), recolor=recolor)
+
+    def run(self, job):
+        from ..builders import posterize
+        try:
+            if self.posterizer is None:
+                self.posterizer = posterize.Posterizer(self.source)
+            pixels, stats = self.posterizer.convert(job['colors'], job['specks'], job['kept'],
+                                                    job['mask'], job['tileable'])
+            if job['recolor']:
+                pixels, stats['recolored'] = posterize.recolor(pixels, self.source, job['mask'], job['recolor'])
+            self._done = (job['generation'], pixels, stats, None)
+        except Exception as exc:  # shown in the status line; a thread must not raise
+            self._done = (job['generation'], None, None, str(exc) or type(exc).__name__)
 
     def tick(self):
-        self._ensure_files()
-        now = time.monotonic()
-        if now - self._beat >= HEARTBEAT:
-            (self.directory/'heartbeat').touch()
-            self._beat = now
-        if self.sent != self.generation and now >= self.due:
-            self._send()
-        self._collect()
-        if self.worker and self.worker.poll() is not None and self.outstanding:
-            self.status = 'Preview worker stopped. Adjust a setting to retry.'
+        done, self._done = self._done, None
+        if done:
+            generation, pixels, stats, error = done
+            if generation == self.generation:
+                if error:
+                    self.received = generation
+                    self.status = 'Conversion failed: '+error
+                else:
+                    self.accept(generation, pixels, stats)
+                redraw()
+        running = self._thread is not None and self._thread.is_alive()
+        if not running and self.busy and time.monotonic() >= self.due and not self._done:
+            self._thread = threading.Thread(target=self.run, args=(self.job(),), daemon=True)
+            self._thread.start()
 
-    def _ensure_files(self):
-        """Temporary-file cleaners can empty the folder mid-session: write the source again."""
-        if (self.directory/'source.npy').is_file():
-            return
-        self.directory.mkdir(parents=True, exist_ok=True)
-        np.save(self.directory/'source.npy', self.source, allow_pickle=False)
-        self._mask_sent = None
-        self._result_stamp = None
-        self.sent = -1  # the job goes out again
-
-    def _mask_file(self, generation):
-        """The mask's file for a job, written only when the mask changed since the last one."""
-        if self._mask_sent is not None and np.array_equal(self._mask_sent[1], self.mask):
-            if (self.directory/self._mask_sent[0]).is_file():
-                return self._mask_sent[0]
-        else:
-            self.mask_version += 1  # also when edited without mask_edited()
-        name = f'mask-{generation}.npy'
-        np.save(self.directory/name, self.mask, allow_pickle=False)
-        self._mask_sent = (name, self.mask.copy())
-        return name
-
-    def _send(self):
-        s = settings()
-        generation = self.generation
-        job = dict(generation=generation, source='source.npy', mask=self._mask_file(generation),
-                   strength=s.strength, cleanup=s.cleanup, tileable=s.tileable,
-                   locked=[list(c) for c in sorted(self.locked)],
-                   lock_groups=s.lock_groups,groups=range_configuration(s))
-        temporary = self.directory/'job.tmp'
-        temporary.write_text(json.dumps(job))
-        try:
-            os.replace(temporary, self.directory/'job.json')
-        except PermissionError:
-            return  # Windows: the worker is reading the last job. Send this one next tick.
-        self.start_worker()
-        self.sent = generation
-
-    def _collect(self):
-        """Take the worker's newest result once; unchanged files are not read again."""
-        result_file = self.directory/'result.json'
-        try:
-            stat = result_file.stat()
-        except FileNotFoundError:
-            return
-        stamp = (stat.st_mtime_ns, stat.st_size)
-        if stamp == self._result_stamp:
-            return
-        try:
-            result = json.loads(result_file.read_text())
-        except (OSError, ValueError):
-            return  # being replaced right now: read it next tick
-        self._result_stamp = stamp
-        generation = result['generation']
-        if generation == self.generation and generation != self.received:
-            if 'error' in result:
-                self.status = 'Conversion failed: '+result['error'].strip().splitlines()[-1]
-                self.received = generation
-                self.result = None
-                self.restore()
-            else:
-                with np.load(self.directory/result['file'], allow_pickle=False) as data:
-                    pixels, group_map = data['pixels'], data['group_map']
-                self.accept(generation, pixels, result['stats'],group_map=group_map)
-            redraw()
-        self._discard_files(generation)
-
-    def _discard_files(self, generation):
-        """Workers never revisit completed generations. Keep disk use bounded."""
-        current = self._mask_sent[0] if self._mask_sent else None
-        for path in self.directory.iterdir():
-            result = _RESULT_FILE.fullmatch(path.name)
-            mask = _MASK_FILE.fullmatch(path.name)
-            if ((result and int(result.group(1)) <= generation)
-                    or (mask and path.name != current and int(mask.group(1)) < generation)):
-                path.unlink(missing_ok=True)
+    def wait(self, timeout=60):
+        """Finish the pending conversion now (Apply, Save PNG, tests)."""
+        deadline = time.monotonic()+timeout
+        self.due = 0
+        while self.busy and time.monotonic() < deadline:
+            self.tick()
+            if self._thread:
+                self._thread.join(.05)
+        return self.ready
 
     def show_result(self, pixels):
-        """Put ``pixels`` in the session's one result image; True when it had to be made.
-
-        Updating it in place keeps the previews and a live model preview on
-        the same datablock and material copies instead of new ones per result.
-        """
+        """Put ``pixels`` in the session's one result image; True when it had to be made."""
         image = self.result_image
         height, width = pixels.shape[:2]
-        try:
-            reusable = image is not None and tuple(image.size) == (width, height)
-        except ReferenceError:  # removed by hand
-            image, reusable = None, False
-        if reusable:
+        if image is not None and tuple(image.size) == (width, height):
             image.pixels.foreach_set(np.asarray(pixels, np.float32).ravel())
             image.update()
             forget_preview_texture(image)
             return False
-        self.result_image = make_image('Posterize Result', pixels)
-        try:
-            if image is not None and image.users == 0:
-                remove_preview_image(image)
-        except ReferenceError:
-            pass
+        self.result_name = make_image('Posterize Result', pixels).name
+        if image is not None and image.users == 0:
+            remove_preview_image(image)
         return True
 
-    def accept(self, generation, pixels, stats, group_map=None):
+    def accept(self, generation, pixels, stats):
         if generation != self.generation:
             return False
         created = self.show_result(pixels)
@@ -506,16 +485,14 @@ class Session:
         self.result_version += 1
         self.received = generation
         self.stats = stats
-        self.group_map = group_map
-        self.status = f"{stats['colors']} colors"
-        if 'families' in stats:
-            self.status += f" · {stats['families']} color families"
-        if stats.get('limited'):
-            self.status += ' · protected pixels / color locks limit reduction'
-        # A live preview already shows the result image, which now has the new pixels.
-        if settings().live and not settings().original and (created or not self.assignments):
+        source = stats.get('source_colors', 0)
+        self.status = (f"{stats['colors']} of {source} colors" if stats['colors'] != source
+                       else f'{source} colors')
+        if 'recolored' in stats:
+            self.status += f" · {stats['recolored']} pixels recolored"
+        if created or not self.previewing():
             try:
-                self.preview()
+                self.refresh_preview()
             except ValueError as exc:
                 self.status += ' · '+str(exc)
         return True
@@ -523,112 +500,120 @@ class Session:
     def target(self):
         s = settings()
         obj = s.target
-        if not obj or obj.name not in self.scene.objects or s.slot >= len(obj.material_slots):
-            raise ValueError('Choose a model material target')
+        scene = self.scene
+        if not obj or not scene or obj.name not in scene.objects or s.slot >= len(obj.material_slots):
+            raise ValueError('Choose a model texture')
         if obj.library or obj.data.library:
             raise ValueError('Linked objects must be made local before applying')
-        slot = obj.material_slots[s.slot]
-        material = slot.material
+        material = original_material(obj.material_slots[s.slot].material)
         if not material or not material.use_nodes:
             raise ValueError('Choose a material with image nodes')
         node = material.node_tree.nodes.get(s.node)
         if not node or node.type != 'TEX_IMAGE':
             raise ValueError('Choose an image texture node')
         if node.image and node.image.colorspace_settings.is_data:
-            raise ValueError('Choose a color texture target, not a material data map')
-        # Only top-level image nodes are offered; nested groups may be shared.
+            raise ValueError('Choose a color texture, not a material data map')
         return obj, s.slot, material, node
 
-    def preview(self):
-        if not self.ready:
-            return
-        self.restore()
-        self.assign_image(self.result_image, self.targets(), ' · Posterize preview')
-
     def targets(self):
-        """Resolve all slots before changing any; unrelated image users stay put."""
-        obj,index,material,node = self.target()
-        if not settings().model_layers or not node.image or obj.type != 'MESH':
-            return [(obj,index,material,(node.name,))]
-        targets = []
-        for candidate in model_meshes(self.scene,obj):
-            for slot_index,slot in enumerate(candidate.material_slots):
-                mat = slot.material
+        """Every slot of the model that shows this texture: all its layers and parts."""
+        obj, index, material, node = self.target()
+        if not node.image or obj.type != 'MESH':
+            return [(obj, index, material, (node.name,))]
+        found = []
+        for candidate in model_meshes(self.scene, obj):
+            for slot_index, slot in enumerate(candidate.material_slots):
+                mat = original_material(slot.material)
                 if not mat or not mat.use_nodes:
                     continue
-                names = tuple(n.name for n in mat.node_tree.nodes if n.type == 'TEX_IMAGE' and same_texture(n.image,node.image))
+                names = tuple(n.name for n in mat.node_tree.nodes
+                              if n.type == 'TEX_IMAGE' and same_texture(n.image, node.image))
                 if not names:
                     continue
                 if candidate.library or candidate.data.library:
-                    raise ValueError('Make all matching model layers local before applying')
-                targets.append((candidate,slot_index,mat,names))
-        return targets
+                    raise ValueError('Make all parts of the model local before applying')
+                found.append((candidate, slot_index, mat, names))
+        return found
 
-    def assign_image(self, image, targets, suffix):
-        """Keep shared materials shared within this operation and roll back failures."""
+    def previewing(self):
+        target = settings().target
+        return bool(target) and any(slot.material and slot.material.get(PREVIEW) is not None
+                                    for slot in target.material_slots)
+
+    def refresh_preview(self):
+        """Show the result on the model, or the original while comparing."""
+        s = settings()
+        self.restore()
+        if not (s.live and not s.original and s.target and self.ready and self.result_image):
+            return
         copies = {}
-        try:
-            for obj,index,material,names in targets:
-                key = (material.as_pointer(),names)
-                if key not in copies:
-                    copy = material.copy()
-                    self.preview_materials.append(copy)
-                    copy.name = material.name+suffix
-                    for name in names:
-                        copy.node_tree.nodes[name].image = image
-                        copy.node_tree.nodes[name].interpolation = 'Closest'
-                    copies[key] = copy
-                copy = copies[key]
-                slot = obj.material_slots[index]
-                self.assignments.append((obj,index,slot.link,material,copy))
-                # OBJECT link isolates other instances of the same mesh data.
-                slot.link = 'OBJECT'
-                slot.material = copy
-        except Exception:
-            self.restore()
-            raise
+        for obj, index, material, names in self.targets():
+            copy = copies.get(material.name)
+            if copy is None:
+                copy = copies[material.name] = material.copy()
+                copy.name = material.name+' · Posterize preview'
+                copy[PREVIEW] = material.name
+                copy[PREVIEW+'_link'] = {}
+                for name in names:
+                    copy.node_tree.nodes[name].image = self.result_image
+            slot = obj.material_slots[index]
+            links = dict(copy[PREVIEW+'_link'])
+            links[obj.name] = slot.link
+            copy[PREVIEW+'_link'] = links
+            # OBJECT link: other objects sharing this mesh keep their look.
+            slot.link = 'OBJECT'
+            slot.material = copy
 
     def restore(self):
-        for obj, index, link, original, preview in self.assignments:
-            try:
-                if index < len(obj.material_slots):
-                    slot = obj.material_slots[index]
-                    if slot.material == preview:
-                        slot.material = original
-                        slot.link = link
-            except (ReferenceError, RuntimeError):
-                pass
-        self.assignments.clear()
-        for material in self.preview_materials:
-            try:
-                if material.users == 0:
-                    bpy.data.materials.remove(material)
-            except ReferenceError:
-                pass
-        self.preview_materials.clear()
+        scene = self.scene
+        drop_previews(scene.objects if scene else None)
 
     def apply(self):
-        if not self.ready:
-            raise ValueError('Wait for the current preview to finish')
+        if not self.wait():
+            raise ValueError('The preview is still updating')
         self.restore()
         targets = self.targets()
-        result = make_image(self.source_name+' · Posterized', self.result)
-        try:
-            result.pack()
-            self.assign_image(result,targets,' · Posterized')
-        except Exception:
-            if result.users == 0:
-                bpy.data.images.remove(result)
-            raise
-        self.assignments.clear()
-        self.preview_materials.clear()
-        count = len({obj.as_pointer() for obj,_,_,_ in targets})
-        self.status = f'Applied to {count} model mesh'+('es' if count != 1 else '')
+        result = make_image(Path(self.source_name).stem+' · Posterized', self.result)
+        result[APPLIED] = True
+        result.pack()
+        # An earlier Apply's material changes in place. A material other
+        # models also use is copied once, so only this model changes.
+        shared = {}
+        for _, _, material, _ in targets:
+            if material.name not in shared:
+                users = sum(1 for other in bpy.data.objects for slot in getattr(other, 'material_slots', ())
+                            if slot.material == material)
+                mine = sum(1 for t in targets if t[2] == material)
+                shared[material.name] = material.get(APPLIED) is None and users > mine
+        replaced = set()
+        for obj, index, material, names in targets:
+            target = material
+            if shared[material.name]:
+                target = bpy.data.materials.get(material.name+' · Posterized')
+                if target is None or target.get(APPLIED) is None:
+                    target = material.copy()
+                    target.name = material.name+' · Posterized'
+                    target[APPLIED] = True
+                slot = obj.material_slots[index]
+                if obj.data.users > 1:
+                    slot.link = 'OBJECT'  # other objects with this mesh keep the original
+                slot.material = target
+            for node_name in names:
+                node = target.node_tree.nodes[node_name]
+                if node.image and node.image.get(APPLIED):
+                    replaced.add(node.image.name)
+                node.image = result
+        for name in replaced:
+            image = bpy.data.images.get(name)
+            if image and image.users == 0:
+                bpy.data.images.remove(image)
+        count = len({obj.name for obj, _, _, _ in targets})
+        self.status = f'Applied to {count} model part'+('s' if count != 1 else '')
         return result
 
     def export(self, filepath):
-        if not self.ready:
-            raise ValueError('Wait for the current preview to finish')
+        if not self.wait():
+            raise ValueError('The preview is still updating')
         path = Path(bpy.path.abspath(filepath)).resolve()
         if self.source_path and path == Path(self.source_path).resolve():
             raise ValueError('Choose a new filename; the source texture is preserved')
@@ -641,29 +626,19 @@ class Session:
 
     def close(self):
         self.restore()
-        try:
-            (self.directory/'stop').touch()
-        except OSError:
-            pass  # Termination below still works if temporary storage was lost.
-        if self.worker and self.worker.poll() is None:
-            self.worker.terminate()
-            try:
-                self.worker.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                self.worker.kill()
-                self.worker.wait(timeout=3)
-        if self.log:
-            self.log.close()
+        if self._thread:
+            self._thread.join(5)
         self.overlays.clear()
         for image in (self.original_image, self.result_image):
-            try:
-                if image and image.users == 0:
-                    remove_preview_image(image)
-            except ReferenceError:
-                pass
-        # Only our tempfile.mkdtemp directory is removed.
-        if self.directory.parent == Path(tempfile.gettempdir()) and self.directory.name.startswith('sparkle_posterize_'):
-            shutil.rmtree(self.directory, ignore_errors=True)
+            if image and image.users == 0:
+                remove_preview_image(image)
+
+
+def original_material(material):
+    """The material a preview copy stands in for (or ``material`` itself)."""
+    if material is not None and material.get(PREVIEW) is not None:
+        return bpy.data.materials.get(material[PREVIEW])
+    return material
 
 
 def close():
@@ -678,19 +653,16 @@ def close():
 
 def open_source(image, context):
     global SESSION
-    pixels = image_pixels(image)  # Capture before closing: source may be our preview.
+    pixels = image_pixels(image)  # before closing: the source may be our preview
     name = image.name
     filepath = bpy.path.abspath(image.filepath) if image.filepath else ''
     close()
     s = settings(context)
-    if not s.ranges_initialized:
-        reset_ranges(s)
-    s.live = False
     s.original = False
     s.zoom, s.pan_x, s.pan_y = 1, .5, .5
     SESSION = Session(pixels, name, filepath, context.scene)
     if not bpy.app.timers.is_registered(tick):
-        bpy.app.timers.register(tick, first_interval=.1)
+        bpy.app.timers.register(tick, first_interval=.02)
     from .gpu_framework import runtime
     for session in runtime._ACTIVE.values():
         session.state['app.active_tab'] = 'POSTERIZE'
@@ -704,17 +676,14 @@ def tick():
         return None
     session = SESSION
     try:
-        if bpy.context.scene != session.scene:
+        if session.scene is None or bpy.context.scene != session.scene:
             close()
             redraw()
             return None
         session.tick()
     except Exception as exc:
         if SESSION is session:
-            # A file hiccup (a folder cleaner, a locked file) leaves the model
-            # preview alone; anything else puts the original back.
-            if not isinstance(exc, OSError):
-                session.restore()
+            session.restore()
             message = 'Preview error: '+str(exc)
             if session.status != message:
                 session.status = message
@@ -724,20 +693,63 @@ def tick():
 
 
 @persistent
-def restore_before_change(*args):
-    close()
+def before_save(*args):
+    """Saved files never contain previews."""
+    if SESSION:
+        SESSION.restore()
+
+
+@persistent
+def after_save(*args):
+    if SESSION:
+        try:
+            SESSION.refresh_preview()
+        except (ValueError, ReferenceError, RuntimeError):
+            pass
+
+
+@persistent
+def before_undo(*args):
+    if SESSION:
+        SESSION.restore()
+
+
+@persistent
+def after_undo(*args):
+    """Undo brings datablocks back as they were: drop any preview it restored,
+    keep the session (protection, kept colors) and show the preview again."""
+    drop_previews()
+    if SESSION:
+        if SESSION.scene is None:
+            close()
+        else:
+            after_save()
     redraw()
+
+
+@persistent
+def before_load(*args):
+    close()
+
+
+@persistent
+def after_load(*args):
+    drop_previews()
+
+
+HANDLERS = (('save_pre', before_save), ('save_post', after_save), ('undo_pre', before_undo),
+            ('redo_pre', before_undo), ('undo_post', after_undo), ('redo_post', after_undo),
+            ('load_pre', before_load), ('load_post', after_load))
 
 
 def register():
     global ENABLED
-    bpy.utils.register_class(PosterizeRange)
     bpy.utils.register_class(PosterizeSettings)
     bpy.types.WindowManager.mcbedrock_posterize = bpy.props.PointerProperty(type=PosterizeSettings, options={'SKIP_SAVE'})
-    for handlers in (bpy.app.handlers.save_pre, bpy.app.handlers.load_pre,
-                     bpy.app.handlers.undo_pre, bpy.app.handlers.redo_pre):
-        if restore_before_change not in handlers:
-            handlers.append(restore_before_change)
+    for name, handler in HANDLERS:
+        handlers = getattr(bpy.app.handlers, name)
+        if handler not in handlers:
+            handlers.append(handler)
     ENABLED = True
 
 
@@ -747,17 +759,13 @@ def unregister():
     close()
     if bpy.app.timers.is_registered(tick):
         bpy.app.timers.unregister(tick)
-    for handlers in (bpy.app.handlers.save_pre, bpy.app.handlers.load_pre,
-                     bpy.app.handlers.undo_pre, bpy.app.handlers.redo_pre):
-        if restore_before_change in handlers:
-            handlers.remove(restore_before_change)
+    for name, handler in HANDLERS:
+        handlers = getattr(bpy.app.handlers, name)
+        if handler in handlers:
+            handlers.remove(handler)
     if hasattr(bpy.types.WindowManager, 'mcbedrock_posterize'):
         del bpy.types.WindowManager.mcbedrock_posterize
     try:
         bpy.utils.unregister_class(PosterizeSettings)
-    except RuntimeError:
-        pass
-    try:
-        bpy.utils.unregister_class(PosterizeRange)
     except RuntimeError:
         pass

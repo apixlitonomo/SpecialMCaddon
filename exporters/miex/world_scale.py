@@ -12,9 +12,25 @@ BLOCK_SCALE = 1.0 / 16.0  # MiEx mesh coordinates are model pixels, not blocks.
 VERSION = 1
 
 
+def subtree_objects(collection):
+    """``collection.all_objects`` as a list in the same order, in linear time.
+
+    ``all_objects`` dedupes with a list scan per object. An individual-blocks
+    import holds a collection and objects per MiEx prototype (about 100,000 for
+    128 x 128 blocks), where that took seconds per call.
+    """
+    objects = dict.fromkeys(collection.objects)
+    for child in collection.children_recursive:
+        for obj in child.objects:
+            objects.setdefault(obj)
+    return list(objects)
+
+
 def stamp_import(collection, path):
-    from pxr import Usd, UsdGeom
-    stage = Usd.Stage.Open(str(path))
+    from pxr import Sdf, Usd, UsdGeom
+    # Only the layer metadata: a full open parsed the whole export again
+    # (seconds for an individual-blocks export) to read one value.
+    stage = Usd.Stage.Open(Sdf.Layer.OpenAsAnonymous(str(path), True))
     collection['mcaddon_miex_export'] = str(Path(path).resolve())
     collection['mcaddon_miex_scale_version'] = VERSION
     collection['mcaddon_miex_block_units'] = 1.0
@@ -28,7 +44,7 @@ def imported_collection(context, name=''):
         return next((c for c in collections if c.name == name), None)
     active = context.view_layer.objects.active
     if active:
-        matches = [c for c in collections if active.name in c.all_objects]
+        matches = [c for c in collections if active.name in {o.name for o in subtree_objects(c)}]
         if len(matches) == 1:
             return matches[0]
     last = context.scene.get('mcaddon_miex_last_collection', '')
@@ -73,7 +89,7 @@ def diagnose_scale(collection):
             sources.setdefault(prim.GetName()[:63], []).append(
                 (_spans(points), scales, points_attr.GetNumTimeSamples() > 1))
         ratios = []
-        objects = [o for o in collection.all_objects if o.type == 'MESH' and len(o.data.vertices)]
+        objects = [o for o in subtree_objects(collection) if o.type == 'MESH' and len(o.data.vertices)]
         for obj in objects:
             candidates = sources.get(obj.name) or sources.get(re.sub(r'\.\d{3,}$', '', obj.name))
             if not candidates or len(candidates) != 1:
@@ -102,8 +118,11 @@ def diagnose_scale(collection):
 
 
 def collection_bounds(collection):
-    points = [obj.matrix_world @ Vector(point) for obj in collection.all_objects
-              if obj.type == 'MESH' and len(obj.data.vertices) for point in obj.bound_box]
+    points = []
+    for obj in subtree_objects(collection):
+        if obj.type == 'MESH' and len(obj.data.vertices):
+            matrix = obj.matrix_world
+            points += [matrix @ Vector(point) for point in obj.bound_box]
     if not points:
         raise MiExError('This imported world has no mesh bounds to frame')
     low = Vector(tuple(min(p[i] for p in points) for i in range(3)))
@@ -115,7 +134,7 @@ def rescale_world(context, collection):
     result = diagnose_scale(collection)
     if result['state'] != 'MISMATCH':
         raise MiExError(result['message'])
-    objects = set(collection.all_objects)
+    objects = set(subtree_objects(collection))
     roots = [obj for obj in objects if obj.parent not in objects]
     if any(obj.parent or obj.constraints or obj.animation_data for obj in roots):
         raise MiExError('This world has a linked or animated root; import a corrected copy instead')

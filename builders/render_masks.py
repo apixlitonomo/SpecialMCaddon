@@ -10,8 +10,13 @@ compositor and a File Output node that writes each mask as its own PNG:
 * Depth: near white to far black over the visible scene.
 * Rim / Edge lights / Ink: Sparkle outline layers, when outlines are on.
 * ID <name>: one Cryptomatte mask per character, rig or model.
+* Block colors: one flat color per kind of block (oak leaves, oak log, grass
+  block ...), for Photoshop's Magic Wand: with Contiguous on, one click picks
+  the connected blocks of that kind, such as one tree's leaves.
 
-It never edits materials. Everything it adds is tagged and removed by disable().
+Block colors are the one thing written from materials: each gets a tagged
+color and AOV Output that change nothing it renders. Everything it adds is
+tagged and removed by disable().
 """
 import json
 
@@ -21,6 +26,11 @@ TAG = 'mc_render_masks'
 OUTPUT = 'Sparkle masks'
 PASSES = ('use_pass_diffuse_direct', 'use_pass_normal', 'use_pass_z', 'use_pass_cryptomatte_object', 'use_pass_shadow')
 MAX_IDS = 12
+BLOCK_PASS = 'Sparkle block colors'
+BLOCK_NODES = ('Sparkle block color', 'Sparkle block color output')
+# Texture names say which face of a block they cover; the block is the rest.
+FACE_SUFFIXES = ('_top', '_bottom', '_side', '_front', '_back', '_end', '_inner', '_outer',
+                 '_overlay', '_snow', '_stage0', '_stage1', '_stage2', '_stage3')
 
 
 def _settings(scene):
@@ -74,6 +84,101 @@ def groups(scene):
         seen.update(meshes)
     found += [(name, meshes) for name, meshes in by_collection.items()]
     return found[:MAX_IDS]
+
+
+def separated_groups(scene):
+    """(name, [object name]) for each piece Separate Block split off an imported world.
+
+    World objects get no ID mask of their own; a piece the artist split off did so
+    to be worked on alone, in Blender and in Photoshop. Point-cloud pieces draw
+    their block through Geometry Nodes, and Cryptomatte names those after the cloud."""
+    from ..ui.world_blocks import SEPARATED
+    return [(obj.name, [obj.name]) for obj in scene.objects
+            if obj.get(SEPARATED) and obj.type in {'MESH', 'POINTCLOUD'} and not obj.hide_render and obj.visible_get()]
+
+
+def id_groups(scene):
+    """One ID mask each: characters and models first, then separated world pieces."""
+    return (groups(scene) + separated_groups(scene))[:MAX_IDS]
+
+
+def block_name(name):
+    """The block a texture or material draws: ``e803429d9be89bb1_grass_block_side.png``
+    and ``MAT_minecraft_block_grass_block_side_8a3dafec.002`` are ``grass_block``."""
+    import re
+    name = re.sub(r'\.\d{3}$', '', name)
+    name = re.sub(r'\.(png|tga|jpe?g|exr)$', '', name, flags=re.I)
+    name = re.sub(r'^[0-9a-f]{16}_', '', name)
+    name = re.sub(r'_[0-9a-f]{7,}$', '', name)
+    changed = True
+    while changed:
+        changed = False
+        for suffix in FACE_SUFFIXES:
+            if name.endswith(suffix) and len(name) > len(suffix):
+                name, changed = name[:-len(suffix)], True
+    return name
+
+
+def block_color(name):
+    """A saturated color fixed by the block's name, far from black and the sky."""
+    import colorsys
+    import hashlib
+    digest = hashlib.md5(name.encode('utf-8')).digest()
+    hue = digest[0] / 255
+    saturation = .55 + .45 * digest[1] / 255
+    value = .45 + .55 * digest[2] / 255
+    return colorsys.hsv_to_rgb(hue, saturation, value)
+
+
+def material_block(material):
+    """The block a material draws, from its first texture's file (MiEx cuts long
+    material names from the front, so a block's faces can differ there)."""
+    image = next((n.image for n in material.node_tree.nodes
+                  if n.bl_idname == 'ShaderNodeTexImage' and n.image is not None), None)
+    source = bpy.path.basename(image.filepath) if image is not None and image.filepath else ''
+    return block_name(source or material.name)
+
+
+def _scene_materials(scene):
+    """Materials the render can show, instanced block models included."""
+    found = set()
+    for obj in scene.objects:
+        for slot in getattr(obj, 'material_slots', ()):
+            if slot.material is not None:
+                found.add(slot.material)
+        data = getattr(obj, 'data', None)
+        for material in getattr(data, 'materials', ()) or ():
+            if material is not None:
+                found.add(material)
+    return [m for m in found if m.node_tree is not None and not m.library]
+
+
+def add_block_colors(scene):
+    """Give every material its block's color on the Block colors pass (missing ones only)."""
+    for material in _scene_materials(scene):
+        nodes = material.node_tree.nodes
+        if nodes.get(BLOCK_NODES[1]) is not None:
+            continue
+        color = nodes.new('ShaderNodeRGB')
+        color.name = color.label = BLOCK_NODES[0]
+        color.outputs[0].default_value = (*block_color(material_block(material)), 1.)
+        output = nodes.new('ShaderNodeOutputAOV')
+        output.name = output.label = BLOCK_NODES[1]
+        output.aov_name = BLOCK_PASS
+        material.node_tree.links.new(color.outputs[0], output.inputs['Color'])
+        for node in (color, output):
+            node[TAG] = True
+            node.location = (-600, -600 - 200 * (node is output))
+
+
+def remove_block_colors():
+    for material in bpy.data.materials:
+        if material.node_tree is None or material.library:
+            continue
+        for name in BLOCK_NODES:
+            node = material.node_tree.nodes.get(name)
+            if node is not None and node.get(TAG):
+                material.node_tree.nodes.remove(node)
 
 
 def light_reference(scene):
@@ -172,7 +277,12 @@ def enable(scene):
             aov = layer.aovs.add()
             aov.name, aov.type = outlines.LINE_PASS, 'COLOR'
             enabled.append((layer.name, 'aov'))
+        if not any(a.name == BLOCK_PASS for a in layer.aovs):
+            aov = layer.aovs.add()
+            aov.name, aov.type = BLOCK_PASS, 'COLOR'
+            enabled.append((layer.name, 'block aov'))
         layer.update_render_passes()
+    add_block_colors(scene)
     s.enabled_passes = json.dumps(enabled)
     before = set(tree.nodes)
     render = tree.nodes.new('CompositorNodeRLayers')
@@ -275,7 +385,7 @@ def enable(scene):
         for name, value in (('Rim', rim), ('Edge lights', edge), ('Ink', ink)):
             write(name, gray(value), g.op('MULTIPLY', alpha, value))
     # One ID mask per character or model.
-    for index, (name, meshes) in enumerate(groups(scene) if s.ids else ()):
+    for index, (name, meshes) in enumerate(id_groups(scene) if s.ids else ()):
         crypto = tree.nodes.new('CompositorNodeCryptomatteV2')
         crypto.source = 'RENDER'
         crypto.scene = scene
@@ -284,6 +394,10 @@ def enable(scene):
         tree.links.new(render.outputs['Image'], crypto.inputs['Image'])
         matte = crypto.outputs['Matte']
         write('ID ' + bpy.path.clean_name(name), gray(matte), matte)
+    # Flat block colors, solid where there is geometry.
+    blocks = render.outputs.get(BLOCK_PASS)
+    if blocks is not None:
+        write('Block colors', blocks, alpha)
     for node in set(tree.nodes) - before:
         node[TAG] = True
     s.active = True
@@ -306,6 +420,7 @@ def update(scene):
     if output.get('mc_mask_engine') not in (None, scene.render.engine):
         enable(scene)
         return
+    add_block_colors(scene)   # models added since the masks were turned on
     key = nodes.get('Sparkle mask key direction')
     if key is not None:
         for socket, value in zip(key.inputs, key_direction(scene)):
@@ -346,15 +461,17 @@ def disable(scene, keep_setting=False):
             layer = scene.view_layers.get(layer_name)
             if layer is None:
                 continue
-            if name == 'aov':
+            if name in ('aov', 'block aov'):
                 from .outlines import LINE_PASS
-                aov = next((a for a in layer.aovs if a.name == LINE_PASS), None)
+                wanted = LINE_PASS if name == 'aov' else BLOCK_PASS
+                aov = next((a for a in layer.aovs if a.name == wanted), None)
                 if aov is not None:
                     layer.aovs.remove(aov)
             else:
                 setattr(layer, name, False)
         s.enabled_passes = ''
         s.active = False
+        remove_block_colors()
 
 
 @bpy.app.handlers.persistent
@@ -390,7 +507,7 @@ class MaskSettings(bpy.types.PropertyGroup):
 class MCBEDROCK_OT_render_masks(bpy.types.Operator):
     bl_idname = 'mcbedrock.render_masks'
     bl_label = 'Photoshop Masks'
-    bl_description = 'Save light, shadow, normal, depth, line and character masks with each render'
+    bl_description = 'Save light, shadow, normal, depth, line, character and block color masks with each render'
     bl_options = {'REGISTER', 'UNDO'}
     enable: bpy.props.BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
 

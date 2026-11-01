@@ -50,7 +50,8 @@ def masks_section(context, state):
                    style=Style(height=32)),
             MaskSlider(settings, 'light_threshold', 'Light threshold'),
             MaskSlider(settings, 'edge_softness', 'Mask edge softness'),
-            hint('masks.help', 'Light, Shadow, Normals, Depth, outline lines and one mask per character.'),
+            hint('masks.help', 'Light, Shadow, Normals, Depth, outline lines, one mask per character, '
+                 'and Block colors: one flat color per kind of block for the Magic Wand.'),
         ]
     else:
         controls.append(hint('masks.off', 'Clipping masks for painting light and shadow, selecting characters and more.'))

@@ -166,49 +166,6 @@ def _library_catalog_path():
     return os.path.join(os.path.dirname(_manual_catalog_path()), 'installed_packs_scoped.json')
 
 
-def _favorites_catalog_path():
-    return os.path.join(os.path.dirname(_manual_catalog_path()), 'favorite_packs.json')
-
-
-_favorites = {'paths': None, 'revision': 0}
-
-
-def favorite_packs():
-    """Normalized paths of the packs starred as favourites, in every .blend."""
-    if _favorites['paths'] is None:
-        _favorites['paths'] = {_normalized_path(item['path']): os.path.abspath(item['path'])
-                               for item in _load_manual_catalog(_favorites_catalog_path())}
-    return _favorites['paths']
-
-
-def is_favorite(path):
-    return bool(path) and _normalized_path(path) in favorite_packs()
-
-
-def favorites_revision():
-    """Changes whenever a pack is starred or unstarred (cached lists key on it)."""
-    return _favorites['revision']
-
-
-def set_favorite(path, favorite):
-    paths = favorite_packs()
-    key = _normalized_path(path)
-    if favorite == (key in paths):
-        return False
-    if favorite:
-        paths[key] = os.path.abspath(path)
-    else:
-        paths.pop(key, None)
-    _save_manual_catalog([{'path': value} for value in sorted(paths.values())], _favorites_catalog_path())
-    _favorites['revision'] += 1
-    return True
-
-
-def favorites_first(entries, path=lambda entry: entry[1].path):
-    """Favourites move to the top; the order is otherwise kept."""
-    return sorted(entries, key=lambda entry: not is_favorite(path(entry)))
-
-
 def _excluded_catalog_path():
     return os.path.join(os.path.dirname(_manual_catalog_path()), 'excluded_packs.json')
 
@@ -2271,28 +2228,6 @@ class MCBEDROCK_OT_exclude_pack(Operator):
         return {'FINISHED'}
 
 
-class MCBEDROCK_OT_favorite_pack(Operator):
-    """Star a resource pack so it lists first; starring never changes pack priority"""
-    bl_idname = "mcbedrock.favorite_pack"
-    bl_label = "Favorite Pack"
-    bl_options = {"REGISTER"}
-    filepath: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
-    favorite: bpy.props.BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
-
-    def execute(self, context):
-        if not self.filepath:
-            return {'CANCELLED'}
-        try:
-            set_favorite(self.filepath, self.favorite)
-        except OSError as exc:
-            self.report({'ERROR'}, 'Could not save favourites: %s' % exc)
-            return {'CANCELLED'}
-        for window in context.window_manager.windows:
-            for area in window.screen.areas:
-                area.tag_redraw()
-        return {'FINISHED'}
-
-
 class MCBEDROCK_OT_open_pack_location(Operator):
     """Open this pack's location in the system file explorer."""
     bl_idname = "mcbedrock.open_pack_location"
@@ -3104,7 +3039,6 @@ classes = (
     MCBEDROCK_OT_open_pack_location,
     MCBEDROCK_OT_exclude_pack,
     MCBEDROCK_OT_clear_cache,
-    MCBEDROCK_OT_favorite_pack,
     MCBEDROCK_OT_add_pack_to_active,
     MCBEDROCK_OT_move_active_pack_up,
     MCBEDROCK_OT_reorder_schematic_pack,

@@ -15,6 +15,8 @@ import numpy as np
 from mathutils import Matrix, Vector
 from mathutils.bvhtree import BVHTree
 
+from ..exporters.miex.world_scale import subtree_objects
+
 TAG = 'mcaddon_water_foam'
 BOB_HEIGHT = 'mc_bob_height'      # object: how far the foam rises above its rest, in blocks
 BOB_SECONDS = 'mc_bob_seconds'    # object: one rise and fall, in seconds
@@ -40,7 +42,7 @@ def remove(collection):
         return 0
     removed = 0
     materials = set()
-    for obj in list(collection.all_objects):
+    for obj in subtree_objects(collection):
         if not obj.get(TAG):
             continue
         # A user-linked copy elsewhere must retain its objects and materials.
@@ -388,8 +390,9 @@ def rebuild(scene, collection, *, water_objects=None):
     # Source-water surfaces sit about .115 blocks below a neighboring bank top.
     # Only this narrow band can stand in for a culled submerged block side.
     bank_drop = .25 * block
-    imported_objects = set(collection.all_objects)
-    sources = list(water_objects) if water_objects is not None else list(collection.all_objects)
+    members = subtree_objects(collection)
+    imported_objects = set(members)
+    sources = list(water_objects) if water_objects is not None else members
     vertices, faces, levels, participating = [], [], set(), []
     footprint, water_rects, irregular = {}, defaultdict(list), set()
     tile_size = 8 * block

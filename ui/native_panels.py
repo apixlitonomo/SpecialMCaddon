@@ -220,15 +220,24 @@ def draw_color_management(self, context):
         row.operator('mcbedrock.texture_correction', text='Restore sRGB').enable = False
 
 
-MENUS = ((bpy.types.VIEW3D_MT_camera_add, draw_add_camera),
-         (bpy.types.RENDER_PT_color_management, draw_color_management))
+# Looked up by name at register time: another add-on or app template can unregister
+# Blender's own panels, and a missing one must not stop Sparkle from loading.
+MENUS = (('VIEW3D_MT_camera_add', draw_add_camera),
+         ('RENDER_PT_color_management', draw_color_management))
 CLASSES = (SPARKLE_PT_camera_grade, SPARKLE_PT_world_sky, SPARKLE_PT_world_fog, SPARKLE_PT_world_clouds)
+
+
+def _menus():
+    for name, function in MENUS:
+        menu = getattr(bpy.types, name, None)
+        if menu is not None:
+            yield menu, function
 
 
 def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
-    for menu, function in MENUS:
+    for menu, function in _menus():
         try:
             menu.remove(function)               # never twice after a reload
         except ValueError:
@@ -237,7 +246,7 @@ def register():
 
 
 def unregister():
-    for menu, function in MENUS:
+    for menu, function in _menus():
         try:
             menu.remove(function)
         except (ValueError, AttributeError):

@@ -34,6 +34,8 @@ import bpy
 import numpy as np
 from mathutils import Matrix
 
+from ..exporters.miex.world_scale import subtree_objects
+
 TAG = 'mcaddon_water_contact'
 LIVE = 'mcaddon_live_whitewater'  # old imports: opted in when live whitewater was a toggle (removed on reapply)
 GROUP = 'MC Water contact foam'
@@ -284,7 +286,7 @@ def _solid_faces(collection, heights, bounds, block, cells=None, shift=(0., 0.))
             top = merged[:, :, 2].max(axis=1)
             merged = merged[np.argpartition(-top, MAX_SHORE_TRIANGLES - 1)[:MAX_SHORE_TRIANGLES]]
         return [merged]
-    for obj in collection.all_objects:
+    for obj in subtree_objects(collection):
         if obj.type != 'MESH' or obj.get(TAG) or obj.data is None or obj.hide_render:
             continue
         mesh = obj.data
@@ -597,7 +599,7 @@ def prop_boxes(scene, depsgraph, sheet, data):
     """
     block, shift, low, span = data['block'], data['shift'], data['low'], data['span']
     collection = sheet.users_collection[0] if sheet.users_collection else None
-    world = {obj.as_pointer() for obj in collection.all_objects} if collection is not None else set()
+    world = {obj.as_pointer() for obj in subtree_objects(collection)} if collection is not None else set()
     to_sheet = np.array(sheet.matrix_world.inverted(), np.float64)
     zmin, zmax = data['levels'].min(), data['levels'].max()
     xmin, ymin = (low + shift) * block
@@ -904,7 +906,7 @@ def plant_cells(collection, water_objects, block=1.):
     """
     skip = {obj.as_pointer() for obj in water_objects}
     cells = set()
-    for obj in collection.all_objects:
+    for obj in subtree_objects(collection):
         if obj.type != 'MESH' or obj.as_pointer() in skip or obj.get(TAG) or obj.data is None:
             continue
         mesh = obj.data
@@ -936,7 +938,7 @@ def plant_cells(collection, water_objects, block=1.):
 
 
 def owned(collection):
-    return [obj for obj in collection.all_objects if obj.get(TAG)]
+    return [obj for obj in subtree_objects(collection) if obj.get(TAG)]
 
 
 def remove(collection):

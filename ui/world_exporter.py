@@ -10,9 +10,15 @@ import bpy
 from bpy.app.handlers import persistent
 from ..exporters.miex.service import Session, MiExError, bundled_runtime, validate_region
 from ..exporters.miex.packs import prepare_packs, prepare_template, prepare_biome_defaults, prepare_liquid_models, resolve_ids
+from ..exporters.miex.packs import prepare_bedrock_compat
+from ..exporters.miex.packs import (prepare_world_biomes, reset_world_dependencies, mark_world_dependencies,
+                                    entity_exports, setting_applied, missing_sources, problem_summary, useful_messages)
+from ..exporters.miex.bedrock_packs import world_addons, manifest as bedrock_manifest
 
 _session = None
 _session_key = None
+# What MiEx could not find during an export, said again with its import's result.
+_import_notes = {}
 _job = None
 _generation = 0
 _storage = None
@@ -253,6 +259,7 @@ def _connect(snapshot, job):
         raise MiExError('Cancelled')
     key = (snapshot['jar'], snapshot['java'], snapshot['memory'], snapshot['home'])
     if _session is not None and (_session_key != key or _session.cancelled.is_set() or
+                                 getattr(_session, 'failed', None) or
                                  _session.process is None or _session.process.poll() is not None):
         _session.close()
         _session = None
@@ -279,33 +286,63 @@ def _prepare_world(snapshot, job, force=False):
             raise MiExError('Choose an existing Minecraft world folder')
         template = prepare_template(resources, snapshot['engine'])
         biome_defaults = prepare_biome_defaults(resources)
+        bedrock_compat = prepare_bedrock_compat(resources)
+        bedrock = (Path(snapshot['world']) / 'db').is_dir()
         job['events'].put(('status', 'Loading world and resource packs…'))
+        # MiEx extracts every world's mods into this one pack and never empties it.
+        if snapshot['world_packs'] and reset_world_dependencies(resources, snapshot['world']):
+            session.request('reloadResourcePacks')
         session.request('loadWorld', world=snapshot['world'], loadWorldResourcePacks=snapshot['world_packs'],
                         worldResourcePackName='mcaddon_world_dependencies')
+        if snapshot['world_packs']:
+            mark_world_dependencies(resources, snapshot['world'])
         world = session.request('getWorld').get('world', {})
         if not world.get('path'):
             raise MiExError('MiEx could not load this world; see log')
         warning = ''
-        if world.get('version',0)>0:
+        # Bedrock worlds have no Java version but render with Java's block models
+        # too: without a base pack yet, prepare the newest installed (or official) assets.
+        if world.get('version',0)>0 or (bedrock and not (resources / 'base_resource_pack' / 'packInfo.json').is_file()):
             job['events'].put(('status', 'Preparing Minecraft assets for this world…'))
             from ..exporters.miex.worlds import client_folders
-            warning = session.request('mcaddonBase',worldVersion=world['version'],clientFolders=client_folders(),
+            warning = session.request('mcaddonBase',worldVersion=world.get('version',0),clientFolders=client_folders(),
                                       timeout=600).get('warning', '')
         dimension = snapshot['dimension']
         if dimension not in world.get('dimensions', []):
             dimension = world.get('dimension', 'overworld')
         session.request('loadDimension', dimension=dimension)
         session.defaults = session.request('getExportSettings').get('settings', {})
-        prepared = prepare_packs(snapshot['packs'], resources, Path(snapshot['home']) / 'archive_cache', job['cancel'])
+        labels = []
+        prepared = prepare_packs(snapshot['packs'], resources, Path(snapshot['home']) / 'archive_cache', job['cancel'],
+                                 progress=lambda text: job['events'].put(('status', text)), labels=labels)
+        session.pack_labels = labels + [("the world's mods", str(resources / 'mcaddon_world_dependencies'))]
+        # The biomes of the world's own datapacks, every namespace (MiEx skips server ones).
+        world_biomes = prepare_world_biomes(snapshot['world'], resources)
+        # A Bedrock world's add-ons from com.mojang (development_*_packs and the
+        # like): MiEx only loads packs stored inside the world folder.
+        addons = []
+        if bedrock and snapshot['world_packs']:
+            entries, notes = world_addons(snapshot['world'])
+            # Packs the user already put in the stack keep their place (their session
+            # copies carry their own UUIDs, so compare the sources).
+            taken = {info[0] for info in (bedrock_manifest(p['path']) for p in snapshot['packs']) if info}
+            entries = [e for e in entries if (bedrock_manifest(e['path']) or ('',))[0] not in taken]
+            if entries:
+                job['events'].put(('status', 'Loading %d add-on pack%s…' % (len(entries), '' if len(entries) == 1 else 's')))
+                addons = prepare_packs(entries, resources, Path(snapshot['home']) / 'archive_cache', job['cancel'])
+            if notes:
+                warning = ' '.join(filter(None, [warning] + notes))
         dependencies = session.request('getActiveResourcePacks').get('resourcePacks', [])
         prepare_liquid_models(resources)
         session.request('reloadResourcePacks')
         rows = session.request('mcaddonPacks')['resourcePacks']
-        chosen = resolve_ids([template] + prepared, rows)
+        chosen = resolve_ids([template] + prepared + addons, rows)
         if snapshot['world_packs']:
             chosen += [r['uuid'] for r in rows if Path(r['folder']).name == 'mcaddon_world_dependencies'
                        and r['uuid'] in dependencies and r['uuid'] not in chosen]
-        chosen += resolve_ids([biome_defaults], rows)
+        if world_biomes:
+            chosen += resolve_ids([world_biomes], rows)
+        chosen += resolve_ids([bedrock_compat, biome_defaults], rows)
         try:
             session.request('setActiveResourcePacks', resourcePacks=chosen)
         except MiExError as exc:
@@ -318,6 +355,40 @@ def _prepare_world(snapshot, job, force=False):
         if warning:
             session.world_info['assets_warning'] = warning
     return session
+
+
+def _report_problems(session, job, everything=False):
+    """One short warning for what MiEx could not find or draw that this session
+    has not mentioned yet (missing models and their pack, unknown biomes...);
+    an export repeats all of it with its import. A warning never fails its job."""
+    try:
+        _problems(session, job, everything)
+    except Exception as exc:
+        print('Sparkle: could not collect MiEx problems:', exc)
+
+
+def _problems(session, job, everything=False):
+    try:
+        found = session.request('mcaddonProblems', timeout=30)
+    except MiExError:
+        found = {}
+    if not isinstance(found, dict):
+        found = {}
+    seen = session.__dict__.setdefault('reported', set())
+    new = {kind: [name for name in found.get(kind, []) if everything or (kind, name) not in seen]
+           for kind in ('models', 'blockstates', 'biomes')}
+    new['failed'] = [tuple(c) for c in job.get('failed_chunks', []) if ('failed', tuple(c)) not in seen]
+    lines = session.take_messages() if hasattr(session, 'take_messages') else []
+    messages = [m for m in useful_messages(lines if isinstance(lines, list) else []) if ('message', m) not in seen]
+    if not any(new.values()) and not messages:
+        return
+    for kind, names in new.items():
+        seen.update((kind, name) for name in names)
+    seen.update(('message', m) for m in messages)
+    sources = missing_sources(new['models'], getattr(session, 'pack_labels', [])) if new['models'] else None
+    text = problem_summary(new, sources, messages[:1])
+    if text:
+        job['events'].put(('warning', text))
 
 
 def _run(job, action, snapshot):
@@ -343,13 +414,18 @@ def _run(job, action, snapshot):
                 result = session.world_info
             elif action == 'MAP':
                 from ..exporters.miex.map_model import decode_chunk
-                rows = session.request('mcaddonMap', timeout=120, chunks=job['chunks'])['chunks']
+                answer = session.request('mcaddonMap', timeout=120, chunks=job['chunks'])
+                rows = answer['chunks']
+                # A chunk that cannot be drawn is left out like an absent one, and said once.
+                job['failed_chunks'] = answer.get('failed', [])
                 # Decoded here rather than on Blender's UI thread when the batch lands.
                 result = [dict(chunkX=row['chunkX'], chunkZ=row['chunkZ'], tile=decode_chunk(row)) for row in rows]
             elif action == 'PREVIEW':
                 from ..exporters.miex.preview import COMMAND, decode_chunks
-                rows = session.request(COMMAND, timeout=300, chunks=job['chunks']).get('chunks', [])
-                result = decode_chunks(rows)
+                answer = session.request(COMMAND, timeout=300, chunks=job['chunks'])
+                # Chunks MiEx could not mesh this time; the preview asks for them again.
+                job['preview_failed'] = answer.get('failed', [])
+                result = decode_chunks(answer.get('chunks', []))
             elif action in {'ATLAS', 'PBR', 'MODPACK'}:
                 name = snapshot['tool_pack']
                 if not name or name in {'.', '..'} or any(c in name for c in '/\\:'):
@@ -372,9 +448,12 @@ def _run(job, action, snapshot):
                 if snapshot['dimension'] not in session.world_info.get('dimensions', []):
                     raise MiExError('Choose one of this world’s dimensions')
                 options = dict(snapshot['options'])
-                options['entityExport'] = (snapshot['entity_types'] or session.defaults.get('entityExport', [])) if snapshot['entities'] else []
-                if snapshot['entities'] and not options['entityExport']:
+                chosen_entities = snapshot['entity_types'] or session.defaults.get('entityExport', [])
+                if snapshot['entities'] and not chosen_entities:
                     raise MiExError('Entity export is enabled, but no Entity IDs are selected. Add IDs or turn it off.')
+                # Frames, paintings, armour stands and displays are part of the build in Minecraft.
+                options['entityExport'] = entity_exports(snapshot['entities'], snapshot['entity_types'],
+                                                         session.defaults.get('entityExport', []))
                 configured = session.request('mcaddonConfigure', region=snapshot['region'], options=options,
                     extraRegions=snapshot['extra_regions'],
                     removeCaves=snapshot['removeCaves'], blockAnimations=snapshot['blockAnimations'],
@@ -389,7 +468,7 @@ def _run(job, action, snapshot):
                     blockAnimations=snapshot['blockAnimations'])
                 effective=configured.get('settings', {})
                 for key,value in requested_settings.items():
-                    if effective.get(key)!=value:
+                    if not setting_applied(key, value, effective.get(key)):
                         raise MiExError('MiEx did not apply '+key+'; export stopped')
                 target_dir = Path(snapshot['output']) / ('world_' + time.strftime('%Y%m%d_%H%M%S') + '_' + uuid.uuid4().hex[:6])
                 target_dir.mkdir(parents=True, exist_ok=False)
@@ -404,6 +483,8 @@ def _run(job, action, snapshot):
                 result = str(path)
         if job['cancel'].is_set():
             raise MiExError('Cancelled')
+        if action in {'LOAD', 'MAP', 'PREVIEW', 'EXPORT'}:
+            _report_problems(session, job, everything=action == 'EXPORT')
         job['events'].put(('done', (action, result)))
     except Exception as exc:
         session = job.get('session')
@@ -432,6 +513,10 @@ def _poll():
             arrived += 1
             if kind == 'status':
                 settings.status = result
+            elif kind == 'warning':
+                # Shown above Import until the next result; an export's goes with its import.
+                job['warning'] = result
+                _tell(settings, result, warning=True)
             elif kind == 'error':
                 settings.status = ('Cancelled' if job['cancel'].is_set() else 'Failed: ' + result)
                 from . import world_exporter_canvas
@@ -485,17 +570,21 @@ def _poll():
                     from . import world_exporter_canvas
                     world_exporter_canvas.receive_preview(scene, job, value)
                 elif action in {'ATLAS', 'PBR', 'MODPACK'}:
+                    why = ''
                     if Path(value).is_dir():
                         from .world_exporter_packs import add_source
                         with bpy.context.temp_override(scene=scene):
-                            add_source(bpy.context,value)
+                            why = add_source(bpy.context,value)
                     settings.status = 'Generated pack: ' + Path(value).name
                     from . import world_exporter_canvas
+                    if why:
+                        world_exporter_canvas.tell_packs(world_exporter_canvas.state(scene), Path(value).name + ' is off. ' + why)
                     world_exporter_canvas.invalidate(scene)
                 elif action == 'EXPORT':
                     settings.last_export = value
+                    _import_notes[scene.session_uid] = job.get('warning', '')
                     if not job['snapshot']['auto_import']:
-                        settings.status = 'Export saved: ' + value
+                        settings.status = 'Export saved: ' + value + ('; ' + job['warning'] if job.get('warning') else '')
                         continue
                     settings.status = 'Importing world into Blender…'
                     window = next((w for w in bpy.context.window_manager.windows if w.as_pointer() == job['window']), None)
@@ -596,6 +685,10 @@ def start_job(context, action, stack=None, **extra):
     if stack is not None:
         snapshot['packs'] = [dict(name=name, path=bpy.path.abspath(path)) for name, path in stack]
     if action == 'EXPORT':
+        from .world_exporter_packs import mixed
+        why = mixed(context.scene)
+        if why:
+            raise MiExError(why)
         validate_region(snapshot['region'])
         for region in snapshot['extra_regions']:
             validate_region(region)
@@ -664,6 +757,10 @@ class MCBEDROCK_OT_world_import(bpy.types.Operator):
                                       water_preset=settings.water_preset, outlines=settings.outlines,
                                       whitewater_style=settings.whitewater_style)
             settings.status = 'Imported into ' + collection.name
+            note = _import_notes.pop(context.scene.session_uid, '')
+            if note:
+                settings.status += '; ' + note
+                self.report({'WARNING'}, note)
             if settings.outlines:
                 settings.status += '; ' + _outline_world(context, collection, True)
             if not traced and getattr(getattr(context.scene, 'eevee', None), 'use_raytracing', False):
@@ -797,7 +894,7 @@ class MCBEDROCK_OT_world_water(bpy.types.Operator):
 
     def execute(self, context):
         from ..builders import water
-        from ..exporters.miex.world_scale import imported_collection
+        from ..exporters.miex.world_scale import imported_collection, subtree_objects
         collection = imported_collection(context, self.collection_name)
         if collection is None:
             self.report({'WARNING'}, 'Select an object in a MiEx world first')
@@ -814,7 +911,7 @@ class MCBEDROCK_OT_world_water(bpy.types.Operator):
                    settings.bl_rna.properties['water_preset'].enum_items[preset].name + ' water applied')
         already_applied = preset != 'ORIGINAL' and any(
             slot.material and slot.material.get(water.TAG) == preset
-            for obj in collection.all_objects if obj.type == 'MESH' for slot in obj.material_slots)
+            for obj in subtree_objects(collection) if obj.type == 'MESH' for slot in obj.material_slots)
         if not result['changed'] and not already_applied:
             message = 'No matching water to restore' if preset == 'ORIGINAL' else 'No replaceable water found'
         if result['skipped']:
@@ -939,6 +1036,12 @@ class MCBEDROCK_OT_world_pack(bpy.types.Operator):
         scene=context.scene
         result={'FINISHED'}
         if self.action=='ADD':
+            from .world_exporter_packs import refusal
+            library=scene.mcbedrock_discovered_packs
+            why=refusal(scene,library[settings.available_index]) if 0<=settings.available_index<len(library) else ''
+            if why:
+                self.report({'ERROR'},why)
+                return {'CANCELLED'}
             result=bpy.ops.mcbedrock.add_resource_pack_to_active(pack_index=settings.available_index)
         elif self.action!='COPY' and 0<=settings.pack_index<len(scene.mcbedrock_active_packs):
             scene.mcbedrock_active_pack_index=settings.pack_index

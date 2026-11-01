@@ -17,6 +17,8 @@ import bpy
 import numpy as np
 from mathutils import Matrix
 
+from ..exporters.miex.world_scale import subtree_objects
+
 TAG = 'mcaddon_water_body'
 VERSION = 1
 INSET = .002  # blocks
@@ -55,7 +57,7 @@ def _shared(collection):
 
 
 def owned(collection):
-    return [obj for obj in collection.all_objects if obj.get(TAG)]
+    return [obj for obj in subtree_objects(collection) if obj.get(TAG)]
 
 
 def remove(collection, *, keep_material=None):

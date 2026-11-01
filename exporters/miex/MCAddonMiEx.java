@@ -24,6 +24,8 @@ public class MCAddonMiEx {
         CommandRegistry.registerCommand("mcaddonDiscover", Discover.class);
         CommandRegistry.registerCommand("mcaddonBase", BasePack.class);
         CommandRegistry.registerCommand("mcaddonPreview", MCAddonPreview.class);
+        CommandRegistry.registerCommand("mcaddonProbe", MCAddonProbe.class);
+        MCAddonJavaWorlds.install(args); // built-in files, biome fallback, item models; replaces mcaddonMap and getExportSettings
         MCWorldExporter.main(args);
         System.exit(0);
     }
